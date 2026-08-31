@@ -4,6 +4,22 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # 只改动文档 / 非编译文件时不触发构建；
+    # 需要强制构建时用 workflow_dispatch 手动触发
+    paths-ignore:
+      - 'README'
+      - 'README.md'
+      - 'README_EN.md'
+      - '**/*.md'
+      - 'research.md'
+      - 'Documentation/**'
+      - 'LICENSES/**'
+      - 'COPYING'
+      - 'CREDITS'
+      - 'MAINTAINERS'
+      - '.gitignore'
+      - '.mailmap'
+      - 'upstream-series/**'
   workflow_dispatch:
 
 # 显式授权：仓库默认 GITHUB_TOKEN 为 read-only，
