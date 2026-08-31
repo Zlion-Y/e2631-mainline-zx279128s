@@ -1,61 +1,48 @@
 #!/usr/bin/env bash
-# One-command build for the ZTE ZXHN E2631 (ZX279128S) mainline kernel.
+# One-command in-tree build for the ZTE ZXHN E2631 (ZX279128S) mainline kernel.
+#
+# The repository root IS the full kernel source tree (Linux 6.18.38 + E2631
+# platform support). No base tree fetch, no patches - clone, build, boot.
 #
 # Usage:
-#   ./build.sh              # full: fetch base tree, patch, configure, build, pack
-#   ./build.sh --no-fetch   # reuse existing ./linux tree
+#   ./build.sh
 #
-# Requirements:
-#   Linux (or WSL2): gcc aarch64/arm cross or the Arm GNU Toolchain,
-#   bc flex bison libssl-dev cpio wget git python3
+# Requirements (Linux / WSL2):
+#   Arm GNU Toolchain 10.3 (arm-none-linux-gnueabihf-) in PATH, or export
+#   CROSS_COMPILE=<your-prefix->
+#   host packages: bc flex bison libssl-dev cpio python3
 #
 # Output: out/uImage-e2631.img  (tftp 0x43000000 + bootm 0x43000000)
 set -euo pipefail
 
-BASE_REPO="https://github.com/cnjn/linux-mainline-zte-zxslc-sr1010"
-BASE_BRANCH="codex/sr1010-mainline"     # Linux 6.18.38 + ZX279133 support
-DEFCONFIG=zx279128s_e2631_defconfig
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-LINUX="$ROOT/linux"
+cd "$ROOT"
+
+CROSS="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
+DEFCONFIG=zx279128s_e2631_defconfig
+DTB=arch/arm/boot/dts/zte/zx279128s-e2631.dtb
 OUT="$ROOT/out"
-ARCH=arm
-JOBS=$(nproc)
+JOBS="$(nproc)"
 
-echo "==> [1/5] base tree"
-if [ "${1:-}" != "--no-fetch" ]; then
-    if [ ! -f "$LINUX/Makefile" ]; then
-        git clone --depth 1 -b "$BASE_BRANCH" "$BASE_REPO" "$LINUX"
-    fi
-fi
-cd "$LINUX"
-
-echo "==> [2/5] patches"
-# idempotent: only apply if the DTS is absent
-if [ ! -f arch/arm/boot/dts/zte/zx279128s-e2631.dts ]; then
-    git apply "$ROOT"/patches/*.patch
-    echo "    patches applied"
-else
-    echo "    already patched, skipping"
+if [ ! -f "arch/arm/configs/$DEFCONFIG" ]; then
+    echo "ERROR: $DEFCONFIG not found - run this from the cloned repo root" >&2
+    exit 1
 fi
 
-echo "==> [3/5] config"
-# make the zte DTS dir build
-if ! grep -q "subdir-y += zte" arch/arm/boot/dts/Makefile; then
-    printf 'subdir-y += zte\n' >> arch/arm/boot/dts/Makefile
-fi
-cp "$ROOT/configs/$DEFCONFIG" arch/arm/configs/
-make ARCH=$ARCH O="$ROOT/build" "$DEFCONFIG"
+echo "==> [1/4] configure ($DEFCONFIG)"
+make ARCH=arm CROSS_COMPILE="$CROSS" "$DEFCONFIG"
 
-echo "==> [4/5] build (-j$JOBS)"
-make ARCH=$ARCH O="$ROOT/build" -j"$JOBS" zImage
-make ARCH=$ARCH O="$ROOT/build" dtbs || true
-DTB=$(find "$ROOT/build/arch/arm/boot/dts" -name 'zx279128s-e2631.dtb' | head -1)
-[ -n "$DTB" ] || { echo "ERROR: dtb not built"; exit 1; }
+echo "==> [2/4] build zImage (-j$JOBS)"
+make ARCH=arm CROSS_COMPILE="$CROSS" -j"$JOBS" zImage
 
-echo "==> [5/5] pack uImage"
+echo "==> [3/4] build dtb"
+make ARCH=arm CROSS_COMPILE="$CROSS" zte/zx279128s-e2631.dtb
+[ -f "$DTB" ] || { echo "ERROR: $DTB not built" >&2; exit 1; }
+
+echo "==> [4/4] pack uImage"
 mkdir -p "$OUT"
-cat "$ROOT/build/arch/arm/boot/zImage" "$DTB" > "$OUT/zImage-dtb-e2631"
-python3 "$ROOT/tools/pack_uimage.py" "$OUT/zImage-dtb-e2631" "$OUT/uImage-e2631.img"
+cat arch/arm/boot/zImage "$DTB" > "$OUT/zImage-dtb-e2631"
+python3 "$ROOT/e2631-tools/pack_uimage.py" "$OUT/zImage-dtb-e2631" "$OUT/uImage-e2631.img"
 
 cat <<EOF
 

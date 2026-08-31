@@ -1,6 +1,6 @@
-[English](README_EN.md)
-
 # ZTE ZXHN E2631（ZX279128S）主线 Linux 移植
+
+[English](README_EN.md)
 
 主线 Linux 6.18.38 跑在中兴 ZXHN E2631（巡天AX3000）路由器上。
 SoC：ZTE ZX279128S，双核 Cortex-A9 @1GHz，256MB DDR3，128MB SPI NAND。
@@ -61,48 +61,68 @@ bootm 0x43000000
 
 ## 仓库结构
 
+本仓库就是**完整的 Linux 内核源码树**（Linux 6.18.38 + E2631 平台适配全部落树），
+clone 后直接构建，不需要单独拉基础树或套补丁。
+
 ```
-images/uImage-e2631.img    可启动内核（initramfs 已内嵌）
-configs/zx279128s_e2631_defconfig     精简 defconfig
-configs/zx279128s_e2631_full.config   验证过的完整 .config
-dts/zx279128s-e2631.dts    板级设备树（含编译好的 .dtb）
-patches/                   基于 cnjn 6.18.38 树的修改补丁
-initramfs/                 init.c + cpio 打包器（交互式 bring-up shell）
-tools/                     tftpd2.py（TFTP 服务器）、pack_uimage.py、
-                           serial_ctl.py（串口驱动）、构建脚本
-docs/                      调试过程存档
+arch/arm/boot/dts/zte/zx279128s-e2631.dts   板级设备树（含 zte 子目录 Makefile）
+arch/arm/configs/zx279128s_e2631_defconfig  精简 defconfig（initramfs 已内嵌）
+initramfs-e2631.cpio.gz                     内嵌 initramfs（busybox + uClibc + init）
+e2631-tools/                                配套工具
+│  tftpd2.py           简易 TFTP 服务器（UDP 69）
+│  pack_uimage.py      uImage 打包（load/entry 0x40008000）
+│  serial_ctl.py       串口驱动（驱动 U-Boot 用）
+│  bootflow2.py        脚本化 tftp + bootm 串口序列
+│  mkconfig.sh / cleanbuild3.sh / mihomobuild.sh    MSYS2 构建步骤
+│  initramfs-src/      init.c + pack2.py（initramfs 构建源）
+upstream-series/       cnjn 的 ZX279133 16 补丁集（6.18.38 基线，参考）
+research.md            内核版本调研笔记
+README / README.md / README_EN.md
+build.sh / build.bat   一键编译脚本（Linux/WSL 与 Windows/MSYS2）
+.github/workflows/build.yml    CI：main + v* tag 构建并发布 Release
 ```
+
+编译产物不进仓库，由 CI 发布到 GitHub Release（tag `v0.1.1` 已附带
+`uImage-e2631.img`，可直接下载引导）。
 
 ## 编译
 
-基础源码树：cnjn 的 `linux-mainline-zte-zxslc-sr1010` 仓库
-`codex/sr1010-mainline` 分支（Linux 6.18.38 + ZX279133 平台支持），
-套用 `patches/`，使用 `configs/zx279128s_e2631_defconfig`。
+clone 后直接在树内构建，以下命令与 CI 完全一致（无需套补丁）。
 
-Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）和 Linux 都能编。
-Windows 注意：`make -j4` 上限（更高 -j 在 MSYS2 下不稳定）；
-arch/arm/Makefile 里已强制 `-marm`（mingw 工具链默认 Thumb）；
-fixdep / gen_init_cpio 带了 CRLF 兼容补丁。
+Linux / WSL（先安装 Arm GNU Toolchain 10.3，把 `bin` 加进 PATH）：
 
-## 已知缺口 / 后续计划
+```bash
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
 
-- 有线网络：集成 GEPHY + zx279128s-mdio + TM/NPP/PP 包处理引擎驱动未移植
-  （需从原厂 tm.ko / switch.ko 逆向）
-- SPI-NAND（ZTE SPIFC）未移植 → 暂无法访问 flash
-- PCIe host（zte,ZX279127-pcie）未移植 → MT7916 WiFi 暂不可用
-  （mt7916e 驱动已编入内核，等 PCIe host 驱动）
-- 目前单核：原厂 `zte,zx279128-smp` enable-method 未移植
-- 时钟树用 fixed-clock 占位（A9 PERIPHCLK 500MHz 实测可用）
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
+
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
+
+cat arch/arm/boot/zImage arch/arm/boot/dts/zte/zx279128s-e2631.dtb > zImage-dtb-e2631
+
+python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
+```
+
+产物 `uImage-e2631.img` 按上文 TFTP 引导即可。
+
+Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意：
+
+- `make -j4` 上限（更高 `-j` 在 MSYS2 下不稳定）；
+- arch/arm/Makefile 里已强制 `-marm`（mingw 工具链默认 Thumb）；
+- fixdep / gen_init_cpio 带了 CRLF 兼容补丁。
+
+或者直接用 GitHub Actions：fork 后 push（或手动 `workflow_dispatch`），
+产物在 Actions 页面 / Release 下载，零本机环境。
 
 ## 快速开始（接手者必读）
 
-三种编译方式，任选其一：
+三种方式，任选其一：
 
 | 方式 | 命令 | 适用 |
 |---|---|---|
-| **Linux / WSL2** | `./build.sh` | 推荐，全自动（拉依赖→补丁→编译→打包） |
-| **Windows 原生** | `build.bat` | 自动装 MSYS2+工具链后编译（较慢） |
-| **GitHub Actions** | fork 后 push 即可 | 零环境，云端编译，Actions 页面下载 uImage |
+| **Linux / WSL2** | `./build.sh` | 推荐，树内一键编译打包 |
+| **Windows 原生** | `build.bat` | 自动装 MSYS2 + 工具链后编译（较慢，首次自动下载） |
+| **GitHub Actions** | fork 后 push | 零环境，云端编译，Actions 页面 / Release 下载 uImage |
 
 产物 `uImage-e2631.img` 用 TFTP 刷入：`tftp 0x43000000 uImage-e2631.img`，
 然后 `bootm 0x43000000`（加载地址必须是 0x43000000，见下方说明）。

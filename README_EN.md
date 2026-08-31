@@ -1,6 +1,6 @@
-[中文](README.md)
-
 # ZTE ZXHN E2631 (ZX279128S) mainline Linux port
+
+[中文](README.md)
 
 Mainline Linux 6.18.38 running on the ZTE ZXHN E2631 "巡天AX3000" router
 (SoC: ZTE ZX279128S, dual Cortex-A9 @1GHz, 256MB DDR3, 128MB SPI NAND).
@@ -62,38 +62,60 @@ header on the kernel entry point → silent crash.
 
 ## Repo layout
 
+This repository **is the full Linux kernel source tree** (Linux 6.18.38 +
+all E2631 platform changes committed in-tree). Clone and build directly -
+no base tree fetch, no patches to apply.
+
 ```
-images/uImage-e2631.img    bootable kernel (initramfs embedded)
-configs/zx279128s_e2631_defconfig     minimal defconfig
-configs/zx279128s_e2631_full.config   full .config of the verified build
-dts/zx279128s-e2631.dts    board device tree (+ compiled .dtb)
-patches/                   changes on top of cnjn's 6.18.38 tree
-initramfs/                 init.c + cpio packer (interactive bring-up shell)
-tools/                     tftpd2.py (TFTP server), pack_uimage.py,
-                           serial_ctl.py (UART driver), build scripts
-docs/                      additional notes
+arch/arm/boot/dts/zte/zx279128s-e2631.dts   board device tree (incl. zte/ Makefile)
+arch/arm/configs/zx279128s_e2631_defconfig  minimal defconfig (initramfs embedded)
+initramfs-e2631.cpio.gz                     embedded initramfs (busybox + uClibc + init)
+e2631-tools/                                companion tools
+│  tftpd2.py           minimal TFTP server (UDP 69)
+│  pack_uimage.py      uImage packer (load/entry 0x40008000)
+│  serial_ctl.py       UART driver for driving U-Boot
+│  bootflow2.py        scripted tftp+bootm serial sequence
+│  mkconfig.sh / cleanbuild3.sh / mihomobuild.sh    MSYS2 build steps
+│  initramfs-src/      init.c + pack2.py (initramfs build source)
+upstream-series/       cnjn's ZX279133 16-patch series (6.18.38 baseline, reference)
+research.md            kernel-version research notes
+README / README.md / README_EN.md
+build.sh / build.bat   one-command build scripts (Linux/WSL and Windows/MSYS2)
+.github/workflows/build.yml    CI: build on main and v* tags, publish Release
 ```
+
+Built images are not committed; CI publishes them to GitHub Releases
+(tag `v0.1.1` already ships `uImage-e2631.img`, ready to download and boot).
 
 ## Building
 
-Base tree: cnjn's `linux-mainline-zte-zxslc-sr1010` branch
-`codex/sr1010-mainline` (Linux 6.18.38 + ZX279133 platform support),
-then apply `patches/`, use `configs/zx279128s_e2631_defconfig`.
+Clone and build in-tree. The commands below are exactly what CI runs
+(no patches needed).
 
-Works on Windows (MSYS2 + Arm GNU Toolchain mingw host) and Linux.
-On Windows: `make -j4` maximum (higher -j is unstable under MSYS2),
-`-marm` is forced in arch/arm/Makefile (the mingw toolchain defaults
-to Thumb), fixdep/gen_init_cpio carry CRLF-compat patches.
+Linux / WSL (install Arm GNU Toolchain 10.3 first, add `bin` to PATH):
 
-## Known gaps / next steps
+```bash
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
 
-- Wired network: integrated GEPHY + zx279128s-mdio + TM/NPP/PP packet
-  engine drivers not ported (reverse-engineer from vendor tm.ko/switch.ko)
-- SPI-NAND (ZTE SPIFC) not ported → no flash access yet
-- PCIe host (zte,ZX279127-pcie) not ported → MT7916 WiFi dormant
-  (mt7916e driver is already built into the kernel)
-- Single CPU for now: vendor `zte,zx279128-smp` enable-method not ported
-- Clock tree uses fixed-clock placeholders (A9 PERIPHCLK 500MHz works)
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
+
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
+
+cat arch/arm/boot/zImage arch/arm/boot/dts/zte/zx279128s-e2631.dtb > zImage-dtb-e2631
+
+python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
+```
+
+Boot the resulting `uImage-e2631.img` via TFTP as described above.
+
+Windows (MSYS2 + Arm GNU Toolchain mingw host) runs the same commands, note:
+
+- `make -j4` maximum (higher `-j` is unstable under MSYS2);
+- `-marm` is forced in arch/arm/Makefile (the mingw toolchain defaults to Thumb);
+- fixdep/gen_init_cpio carry CRLF-compat patches.
+
+Or just use GitHub Actions: fork and push (or `workflow_dispatch`) - the
+image lands in the Actions page / Releases, zero local setup.
 
 ## Getting started (for maintainers)
 
@@ -101,9 +123,9 @@ Three build paths, pick one:
 
 | Method | Command | Applies to |
 |---|---|---|
-| **Linux / WSL2** | `./build.sh` | recommended, fully automatic |
-| **Windows native** | `build.bat` | auto-installs MSYS2 + toolchain, slower |
-| **GitHub Actions** | fork and push | zero setup, download uImage from Actions |
+| **Linux / WSL2** | `./build.sh` | recommended, one-command in-tree build |
+| **Windows native** | `build.bat` | auto-installs MSYS2 + toolchain, slower on first run |
+| **GitHub Actions** | fork and push | zero setup, download uImage from Actions / Releases |
 
 Flash via TFTP: `tftp 0x43000000 uImage-e2631.img` then
 `bootm 0x43000000` (the load address must be 0x43000000, see notes below).
@@ -118,39 +140,39 @@ Flash via TFTP: `tftp 0x43000000 uImage-e2631.img` then
 | ZTE custom UART | ✅ done | `zteuart` earlycon + ttyAMA0/1 console (register layout shared with ZX279133) |
 | Interactive shell | ✅ done | vendor busybox v1.17.2 (soft-float) with working keyboard input |
 | L2C-310 / GIC / global timer | ✅ done | single core, 1000 BogoMIPS |
-| mihomo kernel features | ✅ all built-in | TUN / TPROXY / xt_socket / nftables / conntrack / NAT / REDIRECT / MARK / policy routing / IPv6 / zram; TPROXY verified present in `/proc/net/ip_tables_targets` |
-| On-board network tools | ✅ working | vendor ip / iptables / ip6tables / ebtables / tc / dnsmasq / curl packed into the initramfs |
-| Device tree | ✅ done | CPU / GIC / PL310 / global timer / both UARTs; NAND, SPIFC, PCIe, MDIO, GEPHY nodes described but disabled |
+| mihomo kernel features | ✅ all built-in | TUN/TPROXY/xt_socket/nftables/conntrack/NAT/REDIRECT/MARK/policy routing/IPv6/zram; TPROXY verified in `/proc/net/ip_tables_targets` |
+| On-board network tools | ✅ available | vendor ip/iptables/ip6tables/ebtables/tc/dnsmasq/curl packed into initramfs |
+| Device tree | ✅ done | CPU/GIC/PL310/global timer/dual UART; NAND, SPIFC, PCIe, MDIO, GEPHY nodes described but disabled |
 
 ### In progress / planned
 
 | Item | Status | Notes |
 |---|---|---|
-| **Wired network driver** | ❌ not started (next target) | Three parts: GEPHY (4x 1G PHY), `zx279128s-mdio` controller, TM/NPP/PP packet engine. Reference: reverse-engineer vendor `tm.ko` (1.2MB) / `switch.ko` (223KB); cnjn ZX279133 MDIO patch (0008) as a style reference |
-| Second core (SMP) | ❌ not ported | vendor enable-method `zte,zx279128-smp`; need to reverse the core-release sequence |
-| SPI-NAND + transparent decrypt | ❌ not ported | ZTE SPIFC controller + Denali NAND; partitions are AES-128-ECB encrypted with a `zte_token`-derived key |
-| PCIe host | ❌ not ported | `zte,ZX279127-pcie`; mt7916e is already built in, WiFi (MT7916) works once PCIe host lands |
-| Clock tree | ⚠️ placeholder | topcrm/lsp0crpm/lsp1crpm modelled as fixed-clocks; A9 PERIPHCLK 500MHz works, peripheral clocks not individually calibrated |
-| DW MMC | ⚠️ DT only | SD controller was disabled in the vendor DT too |
-| USB host | ⚠️ kernel-side verified | dwc2/dwc3 drivers work; this model has no external USB port and the controller clock is unconnected, so DT keeps it disabled |
+| **Wired network driver** | ❌ not started (next goal) | GEPHY (4x 1G PHY) + `zx279128s-mdio` controller + TM/NPP/PP packet engine. Reference: reverse-engineer vendor `tm.ko` (1.2MB)/`switch.ko` (223KB); cnjn's ZX279133 MDIO patch (0008) is a controller template |
+| Second core SMP | ❌ not ported | vendor enable-method `zte,zx279128-smp`; needs reverse engineering (likely A9 NDPGFCR/freeze registers) |
+| SPI-NAND + transparent decrypt | ❌ not ported | ZTE SPIFC controller + Denali NAND; flash partitions use AES-128-ECB transparent decrypt (key derived from `zte_token`) |
+| PCIe host | ❌ not ported | `zte,ZX279127-pcie`; mt7916e driver is already built in - WiFi (MT7916) works once PCIe is up |
+| Clock tree | ⚠️ placeholder | topcrm/lsp0crpm/lsp1crpm are fixed-clocks; A9 PERIPHCLK 500MHz verified, peripheral clocks not individually calibrated |
+| DW MMC | ⚠️ DT only | SD controller is disabled in the vendor DT as well |
+| USB host | ⚠️ kernel support verified | dwc2/dwc3 work, but this board has no external USB port and controller clocks are unwired; kept disabled in DT |
 
-### Toolchain notes
+### Debug toolchain notes
 
-- UART needs `earlycon=zteuart,0x94404000` (standard `earlycon=pl011` hits wrong registers → silence after "Starting kernel ...")
-- Load address must be far from both 0x40008000 and 0x42000000 (0x43000000 proven reliable); loading at the entry address itself triggers the bootm XIP silent crash
-- Cross-build: Windows via MSYS2 + Arm GNU Toolchain (mingw host), `-j4` max; Linux/WSL is faster
-- Userland binaries must be armv5 soft-float (zig `arm-linux-musleabi` static, or vendor uClibc dynamic)
+- UART must use `earlycon=zteuart,0x94404000` (standard `earlycon=pl011` hits wrong registers → silent hang after "Starting kernel ...")
+- Load address must stay away from 0x40008000 and 0x42000000 (`0x43000000` is proven reliable); loading at the entry address itself triggers the bootm XIP-path silent crash
+- Cross-compile: Windows uses MSYS2 + Arm GNU Toolchain (mingw host), `-j4` max; Linux/WSL is faster
+- All userland binaries must be armv5 soft-float (zig `arm-linux-musleabi` static, or vendor uClibc dynamic)
 
-## Credits
+## Acknowledgements
 
 - [cnjn](https://github.com/cnjn/linux-mainline-zte-zxslc-sr1010) —
-  ZX279133 mainline patches, ZTE UART reverse engineering (register
-  offsets, periphid, earlycon). The E2631 UART is the same IP.
+  ZX279133 mainline patches, ZTE UART reverse engineering (register offsets,
+  periphid, earlycon). E2631 shares the same UART IP generation.
 - [1234205a/zte-sr1010-research](https://github.com/1234205a/zte-sr1010-research)
   — vendor firmware analysis methodology.
-- Vendor kernels embed `zte_token`-derived AES keys for flash partitions;
-  this port does not touch flash and contains no vendor keys.
+- The vendor flash-partition AES key is derived from `zte_token`; this port
+  does not touch flash and contains no vendor keys.
 
 ## License
 
-Kernel code: GPL-2.0 (see Linux tree). Port-specific files: GPL-2.0.
+Kernel code: GPL-2.0 (see the Linux source tree). Port-specific files: GPL-2.0.
