@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/clock/zte,zx279133-topcrm.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ZTE ZX279133 top clock and reset manager
+
+maintainers:
+  - cnjn <1779895255@qq.com>
+
+description:
+  The top clock and reset manager (TOPCRM) supplies clocks to the ZX279133
+  low-speed peripheral controllers, SPI flash controller, PVT temperature
+  sensor, MDIO controllers, USB host controller, interconnect, and Cortex-A53
+  CPUs and shared network hardware. Fixed PLL roots feed fixed-factor branches
+  followed by read-only system, CCI, CPU, and network muxes. The system HCLK
+  and PCLK use read-only even dividers. This preserves the firmware-selected
+  boot topology without allowing Linux to reprogram a PLL, mux, or system
+  divider. The PVT working clock uses a separate read-only divider followed by
+  a gate. The provider also models the universal-SerDes and PON-SerDes PCLKs
+  and the firmware-selected PON/NPPT working-clock path with a read-only mux.
+
+properties:
+  compatible:
+    items:
+      - const: zte,zx279133-topcrm
+      - const: syscon
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    items:
+      - description: 25 MHz oscillator
+      - description: Fixed 2 GHz low-speed peripheral PLL root
+      - description: Fixed 1.376256 GHz PLL root
+      - description: Fixed 2.5 GHz FPP PLL root
+      - description: Firmware-configured 2 GHz CPU PLL root
+
+  clock-names:
+    items:
+      - const: osc25m
+      - const: pll-lsp
+      - const: pll-1376m
+      - const: pll-fpp
+      - const: pll-cpu
+
+  '#clock-cells':
+    const: 1
+    description:
+      See include/dt-bindings/clock/zte,zx279133-topcrm.h for valid indices.
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - clock-names
+  - '#clock-cells'
+
+additionalProperties: false
+
+examples:
+  - |
+    clock-controller@10e10000 {
+        compatible = "zte,zx279133-topcrm", "syscon";
+        reg = <0x10e10000 0x60>;
+        clocks = <&osc25m>, <&pll_lsp>, <&pll_1376m>, <&pll_fpp>, <&pll_cpu>;
+        clock-names = "osc25m", "pll-lsp", "pll-1376m", "pll-fpp",
+                      "pll-cpu";
+        #clock-cells = <1>;
+    };
+
+...

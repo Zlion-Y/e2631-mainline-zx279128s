@@ -1,0 +1,53 @@
+name: build-e2631-kernel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc flex bison libssl-dev cpio python3 wget
+
+      - name: Install Arm cross toolchain
+        run: |
+          wget -q https://developer.arm.com/-/media/Files/downloads/gnu-a/10.3-2021.07/binrel/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf.tar.xz
+          tar -xf gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf.tar.xz
+          echo "$PWD/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin" >> $GITHUB_PATH
+
+      - name: Configure
+        run: make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
+
+      - name: Build zImage + dtb
+        run: |
+          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
+          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb || true
+          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- dtbs || true
+          ls -la arch/arm/boot/zImage
+          find arch/arm/boot/dts -name "zx279128s-e2631.dtb"
+
+      - name: Pack uImage
+        run: |
+          DTB=$(find arch/arm/boot/dts -name "zx279128s-e2631.dtb" | head -1)
+          cat arch/arm/boot/zImage "$DTB" > zImage-dtb-e2631
+          python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
+
+      - name: Upload uImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uImage-e2631
+          path: uImage-e2631.img
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: uImage-e2631.img
