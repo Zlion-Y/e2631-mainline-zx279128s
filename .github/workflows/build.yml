@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 显式授权：仓库默认 GITHUB_TOKEN 为 read-only，
+# 创建/更新 Release 需要 contents: write
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
