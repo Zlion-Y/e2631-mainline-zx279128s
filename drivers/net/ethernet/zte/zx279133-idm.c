@@ -214,20 +214,27 @@ zx279133_idm_rx_take_buffer(struct zx279133_eth *eth, dma_addr_t dma,
 		if (!entry->page)
 			return false;
 		if (entry->key == key) {
+			bool match;
+
+			/* key 只是 full DMA 的 lower_32_bits 摘要：碰撞的两个
+			 * 在途缓冲、或硬件回吐的陈旧地址都可能命中同一键位。
+			 * 必须校验全量地址命中后才允许摘除，不匹配就继续
+			 * 探测下一个槽位——否则会错拿别人的缓冲、留下孤儿
+			 * 条目，XSK 路径还会把在途 buff 当 page 误回收 */
+			if (entry->xsk)
+				match = dma == xsk_buff_xdp_get_dma(entry->xdp);
+			else
+				match = dma == page_pool_get_dma_addr(entry->page) +
+					       ZX279133_IDM_RX_PAYLOAD_OFFSET;
+			if (!match) {
+				slot = (slot + 1) &
+				       (ZX279133_IDM_RX_PAGE_MAP_SIZE - 1);
+				continue;
+			}
+
 			*buffer = *entry;
 			zx279133_idm_rx_remove_page(eth, slot);
-			if (buffer->xsk) {
-				if (dma == xsk_buff_xdp_get_dma(buffer->xdp))
-					return true;
-				xsk_buff_free(buffer->xdp);
-			}
-			if (dma == page_pool_get_dma_addr(buffer->page) +
-				   ZX279133_IDM_RX_PAYLOAD_OFFSET)
-				return true;
-			page_pool_recycle_direct(eth->rx_page_pool,
-						 buffer->page);
-			WARN_ON_ONCE(1);
-			return false;
+			return true;
 		}
 		slot = (slot + 1) & (ZX279133_IDM_RX_PAGE_MAP_SIZE - 1);
 	}

@@ -344,6 +344,18 @@ static netdev_tx_t zx279133_start_xmit_common(struct sk_buff *skb,
 		goto drop;
 
 	spin_lock_bh(&eth->tx_lock);
+	/* 与 xdp/xsk 发包路径同一道闸：tx_release（tx_drain + tx_prepare
+	 * memset）之后，netif_tx_disable 前已在排队的 skb 仍可能持锁进来。
+	 * 这里不复查就会照常写描述符占槽，随后被 memset 覆盖——泄漏 skb
+	 * 和它的 DMA 映射。 */
+	if (unlikely(!READ_ONCE(eth->tx_prepared) ||
+		     READ_ONCE(eth->tx_stopping))) {
+		spin_unlock_bh(&eth->tx_lock);
+		dma_unmap_single(eth->dev, dma, skb->len, DMA_TO_DEVICE);
+		zx279133_stats_tx_dropped(eth, ndev);
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
 	if (unlikely(eth->tx_pending >= ZX279133_IDM_TX_DEPTH - 1))
 		zx279133_idm_tx_reclaim_locked(eth);
 	if (unlikely(eth->tx_pending >= ZX279133_IDM_TX_DEPTH - 1)) {

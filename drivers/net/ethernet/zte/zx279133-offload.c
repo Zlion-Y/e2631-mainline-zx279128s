@@ -902,7 +902,7 @@ static int zx279133_flow_stats(struct zx279133_flow_offload *offload,
 	unsigned long lastused;
 	bool used;
 	u64 packets, bytes;
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&offload->lock);
 	entry = xa_load(&offload->flows, f->cookie);
