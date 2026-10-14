@@ -2773,7 +2773,7 @@ OF_EARLYCON_DECLARE(pl011, "arm,pl011", pl011_early_console_setup);
 OF_EARLYCON_DECLARE(pl011, "arm,sbsa-uart", pl011_early_console_setup);
 
 /* Keep this after the fallbacks: this object emits the table in reverse order. */
-OF_EARLYCON_DECLARE(zteuart, "zte,zx279133-uart", zte_pl011_early_console_setup);
+OF_EARLYCON_DECLARE(zteuart, "zte,ZX279127-uart", zte_pl011_early_console_setup);
 
 /*
  * Name without a trailing digit: earlycon derives the console index from
@@ -2959,9 +2959,9 @@ static int pl011_probe(struct amba_device *dev, const struct amba_id *id)
 		return -ENOMEM;
 
 	/*
-	 * ZX279133 supplies arm,primecell-periphid, bypassing
-	 * amba_read_periphid() and its shared-reset deassertion.
-	 * The ZX279128S (E2631) describes no reset in DT, hence optional.
+	 * The ZTE UART is described with arm,primecell-periphid, which bypasses
+	 * amba_read_periphid() and the shared-reset deassertion it would do. E2631
+	 * names no reset provider, hence the optional get.
 	 */
 	if (vendor == &vendor_zte) {
 		rst = devm_reset_control_get_optional_shared_deasserted(&dev->dev, NULL);

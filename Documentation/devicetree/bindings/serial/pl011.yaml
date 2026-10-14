@@ -16,14 +16,13 @@ allOf:
       properties:
         compatible:
           contains:
-            const: zte,zx279133-uart
+            const: zte,ZX279127-uart
     then:
       properties:
         arm,primecell-periphid:
           const: 0x001feffe
       required:
         - arm,primecell-periphid
-        - resets
 
 # Need a custom select here or 'arm,primecell' will match on lots of nodes
 select:
@@ -42,7 +41,7 @@ properties:
           - const: arm,pl011
           - const: arm,primecell
       - items:
-          - const: zte,zx279133-uart
+          - const: zte,ZX279127-uart
           - const: arm,pl011
           - const: arm,primecell
 
