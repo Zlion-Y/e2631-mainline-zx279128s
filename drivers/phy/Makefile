@@ -41,5 +41,4 @@ obj-y					+= allwinner/	\
 					   sunplus/	\
 					   tegra/	\
 					   ti/		\
-					   xilinx/	\
-					   zte/
+					   xilinx/

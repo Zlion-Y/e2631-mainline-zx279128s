@@ -104,44 +104,6 @@ config MDIO_HISI_FEMAC
 	  This module provides a driver for the MDIO busses found in the
 	  Hisilicon SoC that have an Fast Ethernet MAC.
 
-config MDIO_ZX279133
-	bool "ZTE ZX279133 MDIO bus controller"
-	depends on (ARM64 || COMPILE_TEST) && OF_MDIO && COMMON_CLK
-	help
-	  This driver supports the independent Clause 22 and Clause 45 MDIO
-	  controllers in the ZTE ZX279133 SoC. Each controller uses separate
-	  peripheral and working clocks and provides bounded polling for both
-	  native transaction formats.
-
-config MDIO_SR1010_RTL8372N_AUDIT
-	bool "ZTE SR1010 RTL8372N read-only chip ID audit"
-	depends on MDIO_ZX279133
-	help
-	  Enable a test-only non-PHY MDIO child that performs exactly two fixed
-	  read-only chip ID transactions against the SR1010 RTL8372N switch.
-	  The audit fails closed unless attached to the expected MDIO controller
-	  and address, and a one-shot guard prevents any repeated bus access.
-	  This option is intended only for isolated RAM-boot hardware validation.
-
-config MDIO_SR1010_RTL8372N_PORT_AUDIT
-	bool "ZTE SR1010 RTL8372N read-only port status audit"
-	depends on MDIO_ZX279133
-	help
-	  Enable a test-only non-PHY MDIO child that reads the RTL8372N
-	  link, media, speed and duplex status registers for ports 3..8.
-	  This option performs no switch configuration and is intended only
-	  for isolated SR1010 LAN bring-up validation.
-
-config MDIO_SR1010_ZX279051_AUDIT
-	bool "ZTE SR1010 ZX279051 read-only identification audit"
-	depends on MDIO_ZX279133
-	help
-	  Enable a test-only MDIO child that performs exactly two fixed Clause 45
-	  identification reads from the SR1010 WAN PHY. This is intended only for
-	  isolated RAM-boot hardware validation and has no write operation. The
-	  audit fails closed unless it is attached to MDIO1 at its exact address,
-	  and a one-shot guard prevents the reads from being repeated after probe.
-
 config MDIO_I2C
 	tristate
 	depends on I2C

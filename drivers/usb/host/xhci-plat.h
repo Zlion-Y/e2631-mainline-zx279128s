@@ -9,14 +9,11 @@
 #define _XHCI_PLAT_H
 
 struct device;
-struct clk;
 struct platform_device;
 struct usb_hcd;
 
 struct xhci_plat_priv {
 	const char *firmware_name;
-	const char *extra_clk_name;
-	struct clk *extra_clk;
 	unsigned long long quirks;
 	bool power_lost;
 	unsigned sideband_at_suspend:1;
