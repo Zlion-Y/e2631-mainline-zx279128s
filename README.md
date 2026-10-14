@@ -120,7 +120,7 @@ Documentation/Kconfig:13: unknown statement "If"
 
 | 项目 | 缺什么 |
 |---|---|
-| 有线网络 | 三件套都缺：GEPHY（4 个 1G PHY）、`zx279128s-mdio` 控制器、TM/NPP/PP 包处理引擎。DTS 里四个节点已描述但 `disabled`；原厂 `tm.ko`(1.2 MB)/`switch.ko`(223 KB) 可作逆向对象 |
+| 有线网络 | 三件套都缺：GEPHY（4 个 1G PHY）、`zx279128s-mdio` 控制器、TM/NPP/PP 包处理引擎。DTS 里四个节点已描述但 `disabled`。**本机没有 `tm.ko` 可逆向**：E2631 的原厂配置是 `CONFIG_ZX_TM=y`（内建，镜像里的 vmlinux 无符号），带完整符号表的 `tm.ko`(1,240,916 B / 1,286 具名函数) 与 `switch.ko`(198,140 B / 214 具名函数) 来自同一颗 SoC 的另一块板（F670L），由 cubingmucus998 公开：见 issue #1 |
 | 第二核 | 上核流程未逆向（`zte,zx279128-smp`） |
 | SPI-NAND | `zte,ZX279127-spifc` 控制器 + Denali NAND 未接；原厂分区里 rootfs 是 AES-128-ECB 密文，解密是原厂内核的软件层，非原厂内核不需要它（OpenWrt 侧已按明文跑通） |
 | PCIe host | `zte,ZX279127-pcie` 未移植 ⇒ MT7916 / Wi-Fi 在本树上用不上 |
