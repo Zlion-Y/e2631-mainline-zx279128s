@@ -1,163 +1,142 @@
-# ZTE ZXHN E2631（ZX279128S）主线 Linux 移植
+# ZTE ZXHN E2631（ZX279128S）mainline Linux 端口
 
-[English](README_EN.md)
+Linux 6.18.38 在 ZTE ZXHN E2631（SoC = ZTE ZX279128S，双核 Cortex-A9）上
+能配置、能编译、能启动到交互 shell。本仓库就是这棵内核树，加上为这块板子构建所需的改动，
+没有别的。
 
-主线 Linux 6.18.38 跑在中兴 ZXHN E2631（巡天AX3000）路由器上。
-SoC：ZTE ZX279128S，双核 Cortex-A9 @1GHz，256MB DDR3，128MB SPI NAND。
+**这里不产可刷固件。** 要给这台机器刷的系统在 <https://github.com/Zlion-Y/zte-e2631-openwrt>：
+OpenWrt 端口，产物是原厂升级包格式，可直接从原厂 `supgrade.html` 刷入，并且能从 OpenWrt
+改 A/B 槽标记切回原系统 —— 两条都在真机验收过。本仓库只回答一个问题：
+**mainline 能不能在这颗 SoC 上跑起来**，答案是能（见下面的启动记录）。
 
-## 这个仓库现在是什么（2026-10-14 收口）
+## 构建
 
-**只有主线内核本身**：ZX279128S 的平台/时钟/串口/L2C/设备树 + 面向上游的那套驱动，
-加上 `upstream-series/` 里 cnjn 的 ZX279133 补丁集。**不再构建、也不再发布任何可刷镜像。**
+只三条命令，产物是 `zImage` + 一块板子的 `.dtb`：
 
-| 你大概想找的东西 | 现在在哪儿 |
+```bash
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
+make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- dtbs
+```
+
+产物：`arch/arm/boot/zImage`、`arch/arm/boot/dts/zte/zx279128s-e2631.dtb`。
+
+- 交叉编译器用 Arm GNU Toolchain 10.3-2021.07（`arm-none-linux-gnueabihf-`）。
+  OpenWrt 的 `arm-openwrt-linux-muslgnueabi-` 同样能编 —— 内核自己跟 ABI 无关，
+  软浮点这条约束只作用于**用户态**（见下表）。
+- `dtbs` 只会造这一台机器的 dtb：`arch/arm/boot/dts/zte/` 是本树独有的目录，
+  `subdir-y += zte` 是 2026-10-14 清理时才补进 `arch/arm/boot/dts/Makefile` 的，
+  在那之前 `make dtbs` 根本不进这个目录（只能靠点名 `make zte/xxx.dtb`）。
+- Windows/MSYS2 上同一套命令能跑，但 `-j` 到 4 就封顶（更高在 MSYS2 下不稳定），
+  且 `arch/arm/Makefile` 里强制了 `-marm`（mingw 工具链默认 Thumb，会让这颗 A9 起不来）。
+- 没有 CI：本仓库不自动构建，产物不发布 Release。
+
+## 板子的硬件事实（全部实测，不是照着型号猜的）
+
+| 项目 | 结论 |
 |---|---|
-| 能刷进这台机器的固件、原厂升级包格式、A/B 槽回退 | <https://github.com/Zlion-Y/zte-e2631-openwrt>（OpenWrt 端口，`supgrade.html` 直刷已真机验收） |
-| "U-Boot 里 tftp 载入 uImage 跑 mainline" 那套一键脚本 | tag **`v0.1.1`**（`git checkout v0.1.1`；Release 里那份 `uImage-e2631.img` 就是它） |
-| 本仓库当年证明了什么 | 见下面"适配进度"：mainline 能在这颗 A9 上跑到交互 shell（串口/中断/L2C/mihomo 特性全通） |
+| SoC | ZTE ZX279128S，2× Cortex-A9 rev 1（`CPU: ARMv7 Processor [414fc091]`）@1 GHz |
+| FPU | **无 VFP、无 NEON、无硬件除法**：`Features: half thumb fastmult edsp thumbee tls` |
+| 用户态 ABI | 必须 armv5 软浮点 EABI5（原厂是 uClibc 0.9.33.2 软浮点；mihomo 用官方 `linux-armv5` 包） |
+| 内存 | 256 MiB DDR3-1333（U-Boot 报 256 MiB，原厂 DT `reg = <0x40000000 0x10000000>`，原厂 bootargs 带 `mem=256M`） |
+| 闪存 | 128 MiB SPI-NAND（HYF1GQ4UTACAE），擦除块 128 KiB，片上 ECC |
+| 串口 | `0x94404000` / `0x94405000`，ZTE 改版 PL011（寄存器偏移与 arm 版不同，periphid `0x001feffe`） |
+| 中断/定时器 | Cortex-A9 GIC @`0x00801000`，全局定时器 @`0x00800200` |
+| L2 | ARM PL310 @`0x00c00000` |
+| 有线 | 1 WAN + 3 LAN，全走 SoC 内置 GPHY（MDIO @`0x9a101000`，GPHY @`0x9b000000`） |
+| Wi-Fi | MT7916（PCIe `14c3:7906` + `14c3:790a`，跨两个 root port） |
+| USB | **这台没有 USB 器件**：原厂硬件表 `/proc/capability/portinfo` 是 `usb:0`，原厂内核 `# CONFIG USB is not set` |
 
-仍然没做的（这也是它停在"验证用端口"的原因）：**有线网络驱动**（GEPHY + `zx279128s-mdio` + TM/NPP/PP）、
-**第二核 SMP**（enable-method `zte,zx279128-smp` 要上核流程）、**SPI-NAND + 透明解密**。
-OpenWrt 那一侧是拿 PR#25469 的 6.18 树做这些的，所以本仓库不再重复推进。
+## 配置里那几条不能动的约束
 
-⚠ 看到 `zx279133` / `sr1010` 不要以为是这个板子的：那是**另一颗 SoC（ZX279133，arm64）**的驱动，
-从 cnjn 的上游补丁集带进来当参考和上游投稿底稿，全部由自己的 `CONFIG_*` 门控，
-`zx279128s_e2631_defconfig` 一个都没开。要拆到独立分支随时可以（说一声即可）。
+改 `zx279128s_e2631_defconfig` 或 DTS 之前先读这段，每一条都是踩过之后写下来的。
 
-**历史结论（保留，不重复验证）**：已在真机上启动到交互式 busybox shell，全部验证通过 ——
-用的是上面那个已退役的 tftp 通路，证据是下面的完整启动日志。
+- **软浮点是用户态的事，不是内核配置的事**：本 defconfig 保留 `CONFIG_VFP=y`，运行时探测不到就
+  不启用，日志里那句 `VFP support v0.3: not present` 就是它在这块没有 VFP 的 A9 上的表现。
+  真正必须一致的是交叉工具链与用户态二进制（`-mfloat-abi=soft`、不带 `-mfpu`，armv5 EABI5）；
+  OpenWrt 那边之所以把 `CONFIG_VFP` 从内核配置里剥掉，是因为在那套构建里内核配置会牵着
+  工具链的浮点 ABI 走，不是内核本身会崩。
+- **USB 整条关掉**（`# CONFIG_USB_SUPPORT is not set`），DTS 里 `usb0`/`usb1` 也标了 `disabled`。
+  探测一个不存在的控制器会挂住总线，然后看门狗把机器反复重启，表现出来像"刷完起不来"。
+- **`CONFIG_CMDLINE_FORCE=y`**：内核命令行写死在 `CONFIG_CMDLINE`，DT 的 `chosen/bootargs`
+  会被忽略。两处内容有意保持一致，改了记得都改。
+- **串口必须 `earlycon=zteuart,0x94404000`**。用标准 `earlycon=pl011` 会打到错误的寄存器偏移，
+  现象是 `Starting kernel ...` 之后彻底静默 —— 很容易被误判成内核没起来。
+- **时钟是 `fixed-clock` 占位**（uart 25 MHz、APB 100 MHz、A9 PERIPHCLK 500 MHz）。
+  PERIPHCLK 500 MHz 实测能工作；外设时钟精度没有逐个校准过。
+- **只声明 `cpu@0`**：原厂 `enable-method = "zte,zx279128-smp"` 的上核流程没移植，
+  单核跑（`smp: Brought up 1 node, 1 CPU`）。
+
+## 本树相对上游 v6.18.38 改了什么
+
+用 blob 哈希把整棵树跟 `gregkh/linux` 的 `v6.18.38` 逐个文件比过（91191 个上游文件），结果是
+**改 6 个文件、加 4 个文件、上游文件一个不少**：
+
+| 文件 | 改它的原因 |
+|---|---|
+| `drivers/tty/serial/amba-pl011.c` | ZTE 改版 PL011 的寄存器偏移表（`vendor_zte`，靠 `arm,primecell-periphid = <0x001feffe>` 命中）、`zteuart` earlycon（具名 + DT 两种形式）、以及该 vendor 才做的可选 shared-reset |
+| `Documentation/devicetree/bindings/serial/pl011.yaml` | 上面那条 compatible 的 schema：要求 `arm,primecell-periphid`，不要求这块板子没有的 reset 提供者 |
+| `arch/arm/Makefile` | `CFLAGS_ISA` 强制 `-marm`（去掉 `cc-option` 探测）：mingw 工具链默认产 Thumb，这颗 A9 起不来 |
+| `scripts/basic/fixdep.c` | MinGW 交叉编译器会把 Windows 绝对路径（带盘符）写进 `.cmd` 依赖里，宿主端打不开；遇到这种条目跳过 CONFIG 解析而不是让构建失败 |
+| `usr/gen_init_cpio.c` | MSYS 宿主没有 `copy_file_range()` / `O_LARGEFILE`，补一个本地实现 |
+| `arch/arm/boot/dts/Makefile` | `subdir-y += zte`，让 `make dtbs` 真的进这块板子的目录 |
+
+新增的 4 个文件就是这块板子本身：`arch/arm/boot/dts/zte/zx279128s-e2631.dts`、
+`arch/arm/boot/dts/zte/Makefile`、`arch/arm/configs/zx279128s_e2631_defconfig`、这份 `README.md`。
+
+> [!NOTE]
+> 第 1、2、6 行是移植本身；第 3、4、5 行只是为了让 Windows 宿主也能编。只在 Linux 上构建的话
+> 那三条没有意义，但也不碍事。
+
+### 在 Windows 上 clone 会看到假象
+
+内核里有一批只差大小写的同名文件（`net/netfilter/xt_DSCP.c` 与 `xt_dscp.c`、
+`xt_CONNMARK.h` 与 `xt_connmark.h`、`ipt_TTL.h` 与 `ipt_ttl.h` 等 13 组）。Windows 的文件系统
+分不出大小写，一块磁盘上只能落一份，所以 **checkout 出来的一定是残缺的**，`git status` 会长期把
+另一份报成"已修改"。仓库里的内容是对的（哈希比过），但要构建请用 Linux/WSL，
+或者 `git archive` 出一份 LF 树再编 —— 顺带说一句，CRLF 的工作副本 kconfig 直接解析失败：
 
 ```
-=== E2631 mainline bring-up init reached userspace ===
-[init] kernel booted, zteuart console OK
-[init] Features : half thumb fastmult edsp thumbee tls
-[init] handing console to busybox shell
-/ # iptables -t mangle -L PREROUTING    # 正常
-/ # ip rule add fwmark 1 lookup 100     # 正常
-/ # busybox cat /proc/net/ip_tables_targets
-...
-TPROXY
-TPROXY
-MASQUERADE
-REDIRECT
-...
+Documentation/Kconfig:13: unknown statement "If"
 ```
 
-## 完整启动日志（实测，点击展开）
+这条曾经把两个不同 SoC 的文件内容互相覆盖掉（本仓库第一次提交时就发生了），已经在
+"Give the case-colliding x_tables files their own content back" 那个提交里按上游 blob 修好。
+
+
+## 移植进度
+
+### 已经验证过（2026-08-31 上板）
+
+| 项目 | 状态 | 证据 |
+|---|---|---|
+| 内核启动 | 完成 | 下面那份启动记录：`Booting Linux on physical CPU 0x0` → `Run /init as init process` |
+| ZTE 定制串口 | 完成 | `earlycon: zteuart0 at MMIO 0x94404000` → `94404000.serial: ttyAMA0 ... is a PL011 rev1`，控制台交接后仍有交互 shell |
+| GIC / 全局定时器 / PL310 | 完成 | 单核 1000 BogoMIPS，无 L2 报错 |
+| 中断 | 完成 | shell 里 iptables / ip rule / TPROXY 全通（TPROXY 出现在 `/proc/net/ip_tables_targets`） |
+| mihomo 需要的内核特性 | 全部内建 `=y` | TUN、TPROXY（`xt_TPROXY` + `nf_tproxy` v4/v6）、`xt_socket`、nftables（`nft_tproxy`/`nft_socket`/`nft_compat`）、iptables-legacy、conntrack、NAT、REDIRECT/MASQUERADE/MARK、策略路由、IPv6、zram、overlayfs、ext4/squashfs/vfat |
+
+### 没做（这也是它停在"验证用端口"的原因）
+
+| 项目 | 缺什么 |
+|---|---|
+| 有线网络 | 三件套都缺：GEPHY（4 个 1G PHY）、`zx279128s-mdio` 控制器、TM/NPP/PP 包处理引擎。DTS 里四个节点已描述但 `disabled`；原厂 `tm.ko`(1.2 MB)/`switch.ko`(223 KB) 可作逆向对象 |
+| 第二核 | 上核流程未逆向（`zte,zx279128-smp`） |
+| SPI-NAND | `zte,ZX279127-spifc` 控制器 + Denali NAND 未接；原厂分区里 rootfs 是 AES-128-ECB 密文，解密是原厂内核的软件层，非原厂内核不需要它（OpenWrt 侧已按明文跑通） |
+| PCIe host | `zte,ZX279127-pcie` 未移植 ⇒ MT7916 / Wi-Fi 在本树上用不上 |
+| 时钟树 | topcrm / lsp0crpm / lsp1crpm 用 fixed-clock 代替，没有真正的时钟驱动 |
+
+### 已知小毛病（不影响启动，先记下来）
+
+- `GIC: PPI11 is secure or misconfigured` 会打印若干次：全局定时器用的 PPI11 在原厂固件下是安全组。
+- `ttyAMA0 ... base_baud = 0`：波特率靠固定时钟推算，实测 115200 正常。
+
+## 启动记录（实测，点击展开）
 
 <details>
-<summary>U-Boot → 内核 6.18.38 → busybox shell 完整启动日志（2026-08-31 上板实测）</summary>
+<summary>内核 6.18.38 → busybox shell 的关键日志（2026-08-31 上板，串口原文）</summary>
 
 ```text
-Boot SPI NAND
-start read bootheader
-start read secondboot
-non secure boot
-Jump
-
-enter bootloader...
-crpm init enter
-crpm init done
-ddr init enter, rate is 1333 Mbps
-ddr init done
-serial init start
-serial init done
-SPI NAND
-non secure uboot
-backup header!!
-Jump
-
-
-U-Boot 2013.04 (Sep 25 2024 - 14:35:47)
-
-CPU  : ZX279128S@A9,1000MHZ
-Board: ZTE zx279128sevb
-I2C:   ready
-DRAM:  256 MiB
-5,10000000,50000000
-product_vid = 63
-vid=63-E1630
-input gpio:5
-input gpio:15
-input gpio:62
-input gpio:61
-input gpio:43
-input gpio:47
-input gpio:46
-input gpio:45
-output gpio:8,value:1
-output gpio:40,value:1
-output gpio:60,value:0
-input gpio:18
-input gpio:20
-output gpio:55,value:0
-output gpio:52,value:0
-output gpio:54,value:0
-output gpio:51,value:0
-output gpio:2,value:0
-bootsel=3
-NAND:  manuid=1,15
-
-Manu ID: 0x01, Chip ID: 0x15 (AMD SPI NAND HYF1GQ4UTACAE 128MiB 3,3V)
-128 MiB
-<nand_read_skip_bad_,411>!mtdpart=0x1,offset=0x0,mtdpartoffset=0xc0000,mtdPartsize=0x40000,length=0x20000
-In:    serial
-Out:   serial
-Err:   serial
-clk_pll env is not setted, core clk won't change
-Net:   enter ref_clk_set.. mode = 0 .
-enter pll_cfg_fractional
-ref_clk_set success!
-gpon serdes init
-rxpll_ready
-addr 0x9400004c before value is 38000
-addr 0x9400004c after value is 381ff
-eth0
-pdt_cspboot_init:1035 Start to initialize cspboot...
-zteboot_info_default_init:1298 zboot info inited
-pdt_cspboot_info_init:1014 memtop:42000000 entry:40008000
-pdt_cspboot_init:1069 Cspboot initialization is done.
-*** Press 1 means entering boot mode***                                                              0
-cspboot:1510 Entering boot mode ...
-*** Please input bootmode password: ***
-***********
-
-Hit 1 to upgrade software version
-Hit any key to stop autoboot:  0
-=> setenv ipaddr 192.168.10.66
-Unknown command 'setenv' - try 'help'
-=> setenv ipaddr 192.168.10.66
-Unknown command 'setenv' - try 'help'
-=> setenv ipaddr 192.168.10.66
-=> setenv serverip 192.168.10.1
-=> tftp 0x43000000 uImage-e2631.img
-mac 2 phy status changed: 1000M full-duplex
------smac_init
-Using eth0 device
-TFTP from server 192.168.10.1; our IP address is 192.168.10.66
-Filename 'uImage-e2631.img'.
-Load address: 0x43000000
-Loading: #################################################################
-         #################################################################
-         ...(13.3MB 传输进度省略)...
-         #################################################################
-         ####
-         2.8 MiB/s
-done
-Bytes transferred = 13328020 (cb5e94 hex)
-=> bootm 0x43000000
-## Booting kernel from Legacy Image at 43000000 ...
-   Image Name:   E2631-mainline-6.18
-   Image Type:   ARM Linux Kernel Image (uncompressed)
-   Data Size:    13327956 Bytes = 12.7 MiB
-   Load Address: 40008000
-   Entry Point:  40008000
-   Verifying Checksum ... OK
-   Loading Kernel Image ... OK
-OK
-getenv error!----------------------
-|-->setup versioninfo tag...
-
 Starting kernel ...
 
 [    0.000000] Booting Linux on physical CPU 0x0
@@ -167,299 +146,50 @@ Starting kernel ...
 [    0.000000] OF: fdt: Machine model: ZTE ZXHN E2631 (ZX279128S)
 [    0.000000] earlycon: zteuart0 at MMIO 0x94404000 (options '')
 [    0.000000] printk: legacy bootconsole [zteuart0] enabled
-[    0.000000] Memory policy: Data cache writealloc
-[    0.000000] efi: UEFI not found.
-[    0.000000] cma: Reserved 64 MiB at 0x4c000000
-[    0.000000] Zone ranges:
-[    0.000000]   Normal   [mem 0x0000000040000000-0x000000004fffffff]
-[    0.000000]   HighMem  empty
-[    0.000000] Movable zone start for each node
-[    0.000000] Early memory node ranges
-[    0.000000]   node   0: [mem 0x0000000040000000-0x000000004fffffff]
-[    0.000000] Initmem setup node 0 [mem 0x0000000040000000-0x000000004fffffff]
-[    0.000000] OF: reserved mem: Reserved memory: No reserved-memory node in the DT
-[    0.000000] percpu: Embedded 17 pages/cpu s39564 r8192 d21876 u69632
-[    0.000000] pcpu-alloc: s39564 r8192 d21876 u69632 alloc=17*4096
-[    0.000000] pcpu-alloc: [0] 0
 [    0.000000] Kernel command line: earlycon=zteuart,0x94404000 console=ttyAMA0,115200n8 rdinit=/init loglevel=8
-[    0.000000] printk: log buffer data + meta data: 131072 + 409600 = 540672 bytes
-[    0.000000] Dentry cache hash table entries: 32768 (order: 5, 131072 bytes, linear)
-[    0.000000] Inode-cache hash table entries: 16384 (order: 4, 65536 bytes, linear)
-[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 65536
-[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off
-[    0.000000] SLUB: HWalign=32, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
-[    0.000000] rcu: Hierarchical RCU implementation.
-[    0.000000] rcu:     RCU event tracing is enabled.
-[    0.000000] rcu:     RCU restricting CPUs from NR_CPUS=16 to nr_cpu_ids=1.
-[    0.000000]  Tracing variant of Tasks RCU enabled.
-[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 10 jiffies.
-[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
-[    0.000000] RCU Tasks Trace: Setting shift to 0 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=1.
-[    0.000000] NR_IRQS: 16, nr_irqs: 16, preallocated irqs: 16
-[    0.000000] L2C-310 erratum 769419 enabled
-[    0.000000] L2C-310 enabling early BRESP for Cortex-A9
-[    0.000000] L2C-310 full line of zeros enabled for Cortex-A9
-[    0.000000] L2C-310 dynamic clock gating enabled, standby mode enabled
-[    0.000000] L2C-310 cache controller enabled, 16 ways, 256 kB
-[    0.000000] L2C-310: CACHE_ID 0x410000c9, AUX_CTRL 0x46030001
-[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
 [    0.000000] GIC: PPI11 is secure or misconfigured
-[    0.000000] sched_clock: 64 bits at 500MHz, resolution 2ns, wraps every 4398046511103ns
-[    0.007980] clocksource: arm_global_timer: mask: 0xffffffffffffffff max_cycles: 0xe6a171a037, max_idle_ns: 881590485102 ns
-[    0.019011] GIC: PPI11 is secure or misconfigured
-[    0.023690] Switching to timer-based delay loop, resolution 2ns
-[    0.029825] Console: colour dummy device 80x30
-[    0.034051] Calibrating delay loop (skipped), value calculated using timer frequency.. 1000.00 BogoMIPS (lpj=5000000)
 [    0.044616] CPU: Testing write buffer coherency: ok
-[    0.049473] CPU0: Spectre v2: using BPIALL workaround
-[    0.054500] pid_max: default: 32768 minimum: 301
-[    0.059234] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
-[    0.066393] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
-[    0.074899] CPU0: thread -1, cpu 0, socket 0, mpidr 80000000
-[    0.080954] Setting up static identity map for 0x40100000 - 0x40100060
-[    0.086529] rcu: Hierarchical SRCU implementation.
-[    0.091078] rcu:     Max phase no-delay instances is 1000.
-[    0.097278] EFI services will not be available.
 [    0.100985] smp: Bringing up secondary CPUs ...
 [    0.105295] smp: Brought up 1 node, 1 CPU
-[    0.109306] SMP: Total of 1 processors activated (1000.00 BogoMIPS).
 [    0.115608] CPU: All CPU(s) started in SVC mode.
 [    0.120373] Memory: 166436K/262144K available (13312K kernel code, 1571K rwdata, 5096K rodata, 5120K init, 263K bss, 28912K reserved, 65536K cma-reserved, 0K highmem)
 [    0.135529] devtmpfs: initialized
-[    0.139806] VFP support v0.3: not present
-[    0.142680] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
-[    0.152217] posixtimers hash table entries: 512 (order: 0, 4096 bytes, linear)
-[    0.159393] futex hash table entries: 256 (16384 bytes on 1 NUMA nodes, total 16 KiB, linear).
-[    0.169590] pinctrl core: initialized pinctrl subsystem
-[    0.174020] DMI not present or invalid.
-[    0.177771] NET: Registered PF_NETLINK/PF_ROUTE protocol family
-[    0.185246] DMA: preallocated 256 KiB pool for atomic coherent allocations
-[    0.191606] thermal_sys: Registered thermal governor 'step_wise'
-[    0.191696] cpuidle: using governor menu
-[    0.200681] No ATAGs?
-[    0.202847] hw-breakpoint: found 5 (+1 reserved) breakpoint and 1 watchpoint registers.
-[    0.210807] hw-breakpoint: maximum watchpoint size is 4 bytes.
-[    0.216870] Serial: AMBA PL011 UART driver
 [    0.222193] 94404000.serial: ttyAMA0 at MMIO 0x94404000 (irq = 25, base_baud = 0) is a PL011 rev1
 [    0.229664] printk: console [ttyAMA0] enabled
-[    0.229664] printk: console [ttyAMA0] enabled
 [    0.238281] printk: legacy bootconsole [zteuart0] disabled
-[    0.238281] printk: legacy bootconsole [zteuart0] disabled
-[    0.250329] uart-pl011 94405000.serial: aliased and non-aliased serial devices found in device tree. Serial port enumeration may be unpredictable.
-[    0.250678] 94405000.serial: ttyAMA1 at MMIO 0x94405000 (irq = 26, base_baud = 0) is a PL011 rev1
-[    0.281101] iommu: Default domain type: Translated
-[    0.281146] iommu: DMA domain TLB invalidation policy: strict mode
-[    0.292778] SCSI subsystem initialized
-[    0.296790] libata version 3.00 loaded.
-[    0.297117] pps_core: LinuxPPS API ver. 1 registered
-[    0.297132] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
-[    0.297153] PTP clock support registered
-[    0.297195] EDAC MC: Ver: 3.0.0
-[    0.322638] scmi_core: SCMI protocol bus registered
-[    0.339124] nfc: nfc_init: NFC Core ver 0.1
-[    0.339237] NET: Registered PF_NFC protocol family
-[    0.348421] vgaarb: loaded
-[    0.351581] clocksource: Switched to clocksource arm_global_timer
-[    0.372777] NET: Registered PF_INET protocol family
-[    0.372975] IP idents hash table entries: 4096 (order: 3, 32768 bytes, linear)
-[    0.373733] tcp_listen_portaddr_hash hash table entries: 512 (order: 0, 4096 bytes, linear)
-[    0.373771] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
-[    0.373792] TCP established hash table entries: 2048 (order: 1, 8192 bytes, linear)
-[    0.373818] TCP bind hash table entries: 2048 (order: 3, 32768 bytes, linear)
-[    0.373887] TCP: Hash tables configured (established 2048 bind 2048)
-[    0.373967] UDP hash table entries: 256 (order: 2, 14336 bytes, linear)
-[    0.374022] UDP-Lite hash table entries: 256 (order: 2, 14336 bytes, linear)
-[    0.374214] NET: Registered PF_UNIX/PF_LOCAL protocol family
-[    0.443787] RPC: Registered named UNIX socket transport module.
-[    0.443817] RPC: Registered udp transport module.
-[    0.443824] RPC: Registered tcp transport module.
-[    0.443830] RPC: Registered tcp-with-tls transport module.
-[    0.443835] RPC: Registered tcp NFSv4.1 backchannel transport module.
-[    0.443849] PCI: CLS 0 bytes, default 64
-[    0.492013] workingset: timestamp_bits=30 max_order=16 bucket_order=0
-[    0.492440] squashfs: version 4.0 (2009/01/31) Phillip Lougher
-[    0.512305] NFS: Registering the id_resolver key type
-[    0.512372] Key type id_resolver registered
-[    0.512381] Key type id_legacy registered
-[    0.512411] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
-[    0.512421] nfs4flexfilelayout_init: NFSv4 Flexfile Layout Driver Registering...
-[    0.512485] jffs2: version 2.2. (NAND) © 2001-2006 Red Hat, Inc.
-[    0.546478] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
-[    0.546512] io scheduler mq-deadline registered
-[    0.546521] io scheduler kyber registered
-[    0.546557] io scheduler bfq registered
-[    0.567162] ledtrig-cpu: registered to indicate activity on CPUs
-[    0.742032] Serial: 8250/16550 driver, 5 ports, IRQ sharing enabled
-[    0.750917] STMicroelectronics ASC driver initialized
-[    0.808106] brd: module loaded
-[    0.824665] loop: module loaded
-[    0.828443] zram: Added device: zram0
-[    0.845442] tun: Universal TUN/TAP device driver, 1.6
-[    0.852411] CAN device driver interface
-[    0.852616] e1000e: Intel(R) PRO/1000 Network Driver
-[    0.852626] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
-[    0.852685] igb: Intel(R) Gigabit Ethernet Network Driver
-[    0.852694] igb: Copyright (c) 2007-2014 Intel Corporation.
-[    0.853743] i2c_dev: i2c /dev entries driver
-[    0.854742] sdhci: Secure Digital Host Controller Interface driver
-[    0.854757] sdhci: Copyright(c) Pierre Ossman
-[    0.854800] Synopsys Designware Multimedia Card Interface Driver
-[    0.854886] sdhci-pltfm: SDHCI platform and OF driver helper
-[    0.856340] NET: Registered PF_INET6 protocol family
-[    0.932040] Segment Routing with IPv6
-[    0.932130] In-situ OAM (IOAM) with IPv6
-[    0.932279] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
-[    0.932922] NET: Registered PF_PACKET protocol family
-[    0.932944] can: controller area network core
-[    0.932994] NET: Registered PF_CAN protocol family
-[    0.933006] can: raw protocol
-[    0.933016] can: broadcast manager protocol
-[    0.933028] can: netlink gateway - max_hops=1
-[    0.933250] Key type dns_resolver registered
-[    0.933433] ThumbEE CPU extension supported.
-[    0.933455] Registering SWP/SWPB emulation handler
-[    2.372418] clk: Disabling unused clocks
-[    2.372461] PM: genpd: Disabling unused power domains
 [    2.386138] Freeing unused kernel image (initmem) memory: 5120K
 [    2.392434] Run /init as init process
-[    2.392454]   with arguments:
-[    2.392462]     /init
-[    2.392469]   with environment:
-[    2.392474]     HOME=/
-[    2.392480]     TERM=linux
-
 === E2631 mainline bring-up init reached userspace ===
 [init] kernel booted, zteuart console OK
 [init] Features : half thumb fastmult edsp thumbee tls
-[init] soft-float probe: 1234.5*0.25+1 x4 = 6.1504 (expect 6.1504)
 [init] handing console to busybox shell
-
-
-BusyBox v1.17.2 (2024-09-25 14:57:47 CST) built-in shell (ash)
-Enter 'help' for a list of built-in commands.
-
+/ # iptables -t mangle -L PREROUTING
+/ # ip rule add fwmark 1 lookup 100
 / #
 ```
 
+那份日志里的 `Memory: .../262144K` 对应 256 MiB —— 现在 `memory@40000000` 也按原厂 DT 写成
+`<0x40000000 0x10000000>`，两者一致（这条之前是 128 MiB 的保守值，跟日志对不上）。
+
 </details>
 
-## 硬件结论（已实测）
+## 怎么把这块板子变成能跑的路由器
 
-| 项目 | 结论 |
-|---|---|
-| SoC | ZTE ZX279128S，双核 Cortex-A9 rev 1 @1GHz |
-| CPU 特性 | `half thumb fastmult edsp thumbee tls` — **无 VFP、无 NEON、无硬件除法** |
-| 内存 | 256MB DDR3-1333（U-Boot 报 256MiB；DT 里写的 128MB，可按需调整） |
-| NAND | 128MB SPI NAND（AMD/Spansion HYF1GQ4UTACAE） |
-| 串口 | 0x94404000，**ZTE 定制 PL011 寄存器布局**（earlycon 用 `zteuart`，periphid 0x001feffe） |
-| 用户态 | 必须用 **armv5 软浮点**（原厂 uClibc 0.9.33.2） |
-
-## mihomo 所需内核特性（全部内建 =y，已在镜像中验证符号）
-
-TUN、TPROXY（xt_TPROXY + nf_tproxy v4/v6）、xt_socket、nftables
-（nft_tproxy / nft_socket / nft_compat）、iptables-legacy、conntrack、NAT、
-REDIRECT / MASQUERADE / MARK、策略路由（ip rule fwmark）、IPv6、zram、
-overlayfs、ext4 / squashfs / vfat。
-
-mihomo 二进制：请使用官方 `mihomo-linux-armv5` 包（软浮点）。
-
-## 启动方法（TFTP，不写 flash）——**已退役，只在 tag `v0.1.1` 里可用**
-
-2026-10-14 起，本仓库**不再提供**"U-Boot 里 tftp 载入固件"这条通路的任何脚本或镜像：
-它当年唯一的作用是证明 mainline 能在这颗 ZX279128S 上跑到 shell，这件事已经做完（见"适配进度"）。
-真机上要刷的镜像由 <https://github.com/Zlion-Y/zte-e2631-openwrt> 打成原厂升级包格式，
-走原厂 `supgrade.html` 或 `fw_flashing`，经 A/B 槽启动，不碰 U-Boot 命令行。
-
-那条通路的原样（含 `build.sh` / `build.bat` / `e2631-tools/` / 内嵌 initramfs 的 defconfig，
-以及 bootm 的加载地址坑）在 `git checkout v0.1.1` 里完整保留，GitHub Release `v0.1.1` 也还挂着
-那份 `uImage-e2631.img`。要用就取 tag，别往 main 上再加东西 —— 顺便说一句，那段说明里连着
-bootmode 口令，这也是它从 main 上撤下来的原因之一。
-
-## 仓库结构
-
-本仓库就是**完整的 Linux 内核源码树**（Linux 6.18.38 + E2631 平台适配全部落树），
-clone 后直接 `make` 构建，不需要单独拉基础树或套补丁，也不再附带打包/引导脚本。
-
-```
-arch/arm/boot/dts/zte/zx279128s-e2631.dts   板级设备树（含 zte 子目录 Makefile）
-arch/arm/configs/zx279128s_e2631_defconfig  精简 defconfig（不内嵌 initramfs）
-upstream-series/       cnjn 的 ZX279133 16 补丁集（6.18.38 基线，参考）
-research.md            内核版本调研笔记
-README / README.md / README_EN.md
-.github/workflows/build.yml    CI：只做内核构建（zImage + dtbs），产物是 Actions artifact
-```
-
-CI 不发布 Release、也不产 uImage；需要可引导的旧镜像去 tag `v0.1.1`。
-
-## 编译
-
-clone 后直接在树内构建，以下命令与 CI 完全一致（无需套补丁）。
-
-Linux / WSL（先安装 Arm GNU Toolchain 10.3，把 `bin` 加进 PATH）：
-
-```bash
-make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
-make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
-make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
-```
-
-产物是 `arch/arm/boot/zImage` 与 `arch/arm/boot/dts/zte/zx279128s-e2631.dtb`，到这里为止 —— 
-把它们变成能在这块板子上引导的东西不在本仓库的职责内（见上一节）。
-
-Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意：
-
-- `make -j4` 上限（更高 `-j` 在 MSYS2 下不稳定）；
-- arch/arm/Makefile 里已强制 `-marm`（mingw 工具链默认 Thumb）；
-- fixdep / gen_init_cpio 带了 CRLF 兼容补丁。
-
-## 快速开始（接手者必读）
-
-一句话：clone → `make zx279128s_e2631_defconfig` → `make zImage zte/zx279128s-e2631.dtb`，看它编得过、
-DTS 报错不报错。这块板子上的实际部署走 `zte-e2631-openwrt`。
-
-## 适配进度（2026-08-31）
-
-### 已完成 / 已验证
-
-| 项目 | 状态 | 说明 |
-|---|---|---|
-| 主线内核 6.18.38 启动 | ✅ 完成 | U-Boot → 内核 → 用户空间全链路（当时的形态 = tag `v0.1.1` 的 tftp 载入） |
-| ZTE 定制串口 | ✅ 完成 | `zteuart` earlycon + ttyAMA0/1 控制台（寄存器布局同 ZX279133） |
-| 交互式 shell | ✅ 完成 | 原厂 busybox v1.17.2（软浮点）+ 键盘输入 |
-| L2C-310 / GIC / 全局定时器 | ✅ 完成 | 单核 1000 BogoMIPS |
-| mihomo 内核特性 | ✅ 全部内建 | TUN / TPROXY / xt_socket / nftables / conntrack / NAT / REDIRECT / MARK / 策略路由 / IPv6 / zram，已实测 TPROXY 注册于 `/proc/net/ip_tables_targets` |
-| 板上网络命令 | ✅ 可用 | 原厂 ip / iptables / ip6tables / ebtables / tc / dnsmasq / curl —— **注意：那一版是把它们打进内嵌 initramfs 才有的，main 已不再内嵌**（`v0.1.1` 里原样保留） |
-| 设备树 | ✅ 完成 | CPU / GIC / PL310 / 全局定时器 / 双串口；NAND、SPIFC、PCIe、MDIO、GEPHY 节点已描述未启用 |
-
-### 进行中 / 计划
-
-| 项目 | 状态 | 说明 |
-|---|---|---|
-| **有线网络驱动** | ❌ 未开始（下一个目标） | 三件套：GEPHY（4 个 1G PHY）、`zx279128s-mdio` 控制器、TM/NPP/PP 包处理引擎。参考：原厂 `tm.ko`（1.2MB）/`switch.ko`（223KB）逆向，cnjn 的 ZX279133 MDIO 补丁（0008）可作控制器写法参考 |
-| 第二核 SMP | ❌ 未移植 | 原厂 enable-method `zte,zx279128-smp`，需逆向上核流程（推测类似 A9 的 NDPGFCR/freeze 寄存器） |
-| SPI-NAND + 透明解密 | ❌ 未移植 | ZTE SPIFC 控制器 + Denali NAND；flash 分区带 AES-128-ECB 透明解密（密钥由 `zte_token` 派生，型号字符串进内核后可推导） |
-| PCIe host | ❌ 未移植 | `zte,ZX279127-pcie`；mt7916e 驱动已编入内核，PCIe 通了 WiFi 即可用（MT7916） |
-| 时钟树 | ⚠️ 占位 | topcrm/lsp0crpm/lsp1crpm 用 fixed-clock 代替；A9 PERIPHCLK 500MHz 实测工作，外设时钟精度未逐一校准 |
-| DW MMC | ⚠️ DT 已写 | SD 控制器在原厂 DT 里就是 disabled |
-| USB host | ⚠️ 内核支持已验证 | dwc2/dwc3 驱动正常，但本机型无对外 USB 口，且控制器时钟未接，DT 里保持禁用 |
-
-### 调试工具链备忘
-
-- 串口必须用 `earlycon=zteuart,0x94404000`（标准 `earlycon=pl011` 会打到错误寄存器，表现为 "Starting kernel ..." 后静默）
-- 内核加载地址必须远离 0x40008000 和 0x42000000（实测 `0x43000000` 可靠）；加载到入口地址本身会触发 bootm XIP 路径静默崩溃 ——（属于已退役的 tftp/bootm 通路，见上面第"启动方法"一节）
-- 交叉编译：Windows 用 MSYS2 + Arm GNU Toolchain（mingw 宿主），`-j4` 上限；Linux/WSL 更快
-- 用户态二进制一律 armv5 软浮点（zig `arm-linux-musleabi` 静态编译，或原厂 uClibc 动态库）
+不在这棵树里，走 OpenWrt 那条：<https://github.com/Zlion-Y/zte-e2631-openwrt>
+（升级包格式、槽头字段、CRC 规则、A/B 槽回退、Wi-Fi 现状和实测数据都写在它的 `docs/` 里）。
+本仓库早期"从引导加载器用网络载入内核"那套脚本和镜像已退役，只留在 tag `v0.1.1`，
+main 上不再维护，也不再提供任何引导步骤。
 
 ## 致谢
 
-- [cnjn](https://github.com/cnjn/linux-mainline-zte-zxslc-sr1010) —
-  ZX279133 主线补丁、ZTE UART 逆向（寄存器偏移、periphid、earlycon）。
-  E2631 的 UART 是同代 IP，直接受益。
-- [1234205a/zte-sr1010-research](https://github.com/1234205a/zte-sr1010-research)
-  — 原厂固件分析方法论。
-- 原厂内核的 flash 分区 AES 密钥由 `zte_token` 派生；本移植不碰 flash，
-  不包含任何原厂密钥。
+- [cnjn](https://github.com/cnjn/linux-mainline-zte-zxslc-sr1010) —— ZTE UART 的寄存器偏移、
+  periphid、earlycon 逆向。本板的串口是同一代 IP，直接受益。
+- [1234205a/zte-sr1010-research](https://github.com/1234205a/zte-sr1010-research) —— 原厂固件分析方法论。
+- [ghahramani 的 OpenWrt PR #25469](https://github.com/openwrt/openwrt/pull/25469) —— ZX279128S 在 OpenWrt 里的第一版。
+
+本移植不修改闪存、不含任何原厂密钥。
 
 ## 许可证
 
-内核代码：GPL-2.0（见 Linux 源码树）。移植专属文件：GPL-2.0。
+内核树：GPL-2.0。本移植新增的文件（DTS、defconfig、串口驱动改动）：GPL-2.0，
+DTS 同时按 `BSD-2-Clause` 双许可，与上游设备树惯例一致。
