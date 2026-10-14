@@ -5,7 +5,27 @@
 主线 Linux 6.18.38 跑在中兴 ZXHN E2631（巡天AX3000）路由器上。
 SoC：ZTE ZX279128S，双核 Cortex-A9 @1GHz，256MB DDR3，128MB SPI NAND。
 
-**状态：已在真机上启动到交互式 busybox shell，全部验证通过。**
+## 这个仓库现在是什么（2026-10-14 收口）
+
+**只有主线内核本身**：ZX279128S 的平台/时钟/串口/L2C/设备树 + 面向上游的那套驱动，
+加上 `upstream-series/` 里 cnjn 的 ZX279133 补丁集。**不再构建、也不再发布任何可刷镜像。**
+
+| 你大概想找的东西 | 现在在哪儿 |
+|---|---|
+| 能刷进这台机器的固件、原厂升级包格式、A/B 槽回退 | <https://github.com/Zlion-Y/zte-e2631-openwrt>（OpenWrt 端口，`supgrade.html` 直刷已真机验收） |
+| "U-Boot 里 tftp 载入 uImage 跑 mainline" 那套一键脚本 | tag **`v0.1.1`**（`git checkout v0.1.1`；Release 里那份 `uImage-e2631.img` 就是它） |
+| 本仓库当年证明了什么 | 见下面"适配进度"：mainline 能在这颗 A9 上跑到交互 shell（串口/中断/L2C/mihomo 特性全通） |
+
+仍然没做的（这也是它停在"验证用端口"的原因）：**有线网络驱动**（GEPHY + `zx279128s-mdio` + TM/NPP/PP）、
+**第二核 SMP**（enable-method `zte,zx279128-smp` 要上核流程）、**SPI-NAND + 透明解密**。
+OpenWrt 那一侧是拿 PR#25469 的 6.18 树做这些的，所以本仓库不再重复推进。
+
+⚠ 看到 `zx279133` / `sr1010` 不要以为是这个板子的：那是**另一颗 SoC（ZX279133，arm64）**的驱动，
+从 cnjn 的上游补丁集带进来当参考和上游投稿底稿，全部由自己的 `CONFIG_*` 门控，
+`zx279128s_e2631_defconfig` 一个都没开。要拆到独立分支随时可以（说一声即可）。
+
+**历史结论（保留，不重复验证）**：已在真机上启动到交互式 busybox shell，全部验证通过 ——
+用的是上面那个已退役的 tftp 通路，证据是下面的完整启动日志。
 
 ```
 === E2631 mainline bring-up init reached userspace ===
@@ -347,7 +367,7 @@ mihomo 二进制：请使用官方 `mihomo-linux-armv5` 包（软浮点）。
 
 2026-10-14 起，本仓库**不再提供**"U-Boot 里 tftp 载入固件"这条通路的任何脚本或镜像：
 它当年唯一的作用是证明 mainline 能在这颗 ZX279128S 上跑到 shell，这件事已经做完（见"适配进度"）。
-真机上要刷的镜像由 <https://github.com/Zlion-Y/e2631-openwrt-build> 打成原厂升级包格式，
+真机上要刷的镜像由 <https://github.com/Zlion-Y/zte-e2631-openwrt> 打成原厂升级包格式，
 走原厂 `supgrade.html` 或 `fw_flashing`，经 A/B 槽启动，不碰 U-Boot 命令行。
 
 那条通路的原样（含 `build.sh` / `build.bat` / `e2631-tools/` / 内嵌 initramfs 的 defconfig，
@@ -395,7 +415,7 @@ Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意�
 ## 快速开始（接手者必读）
 
 一句话：clone → `make zx279128s_e2631_defconfig` → `make zImage zte/zx279128s-e2631.dtb`，看它编得过、
-DTS 报错不报错。这块板子上的实际部署走 `e2631-openwrt-build`。
+DTS 报错不报错。这块板子上的实际部署走 `zte-e2631-openwrt`。
 
 ## 适配进度（2026-08-31）
 
@@ -426,7 +446,7 @@ DTS 报错不报错。这块板子上的实际部署走 `e2631-openwrt-build`。
 ### 调试工具链备忘
 
 - 串口必须用 `earlycon=zteuart,0x94404000`（标准 `earlycon=pl011` 会打到错误寄存器，表现为 "Starting kernel ..." 后静默）
-- 内核加载地址必须远离 0x40008000 和 0x42000000（实测 `0x43000000` 可靠）；加载到入口地址本身会触发 bootm XIP 路径静默崩溃
+- 内核加载地址必须远离 0x40008000 和 0x42000000（实测 `0x43000000` 可靠）；加载到入口地址本身会触发 bootm XIP 路径静默崩溃 ——（属于已退役的 tftp/bootm 通路，见上面第"启动方法"一节）
 - 交叉编译：Windows 用 MSYS2 + Arm GNU Toolchain（mingw 宿主），`-j4` 上限；Linux/WSL 更快
 - 用户态二进制一律 armv5 软浮点（zig `arm-linux-musleabi` 静态编译，或原厂 uClibc 动态库）
 

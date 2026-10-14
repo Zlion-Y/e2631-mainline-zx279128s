@@ -5,7 +5,28 @@
 Mainline Linux 6.18.38 running on the ZTE ZXHN E2631 "巡天AX3000" router
 (SoC: ZTE ZX279128S, dual Cortex-A9 @1GHz, 256MB DDR3, 128MB SPI NAND).
 
-**Status: boots to an interactive busybox shell over UART. Verified on hardware.**
+## What this repository is now (as of 2026-10-14)
+
+**The mainline kernel only**: ZX279128S platform/clock/serial/L2C/device tree, plus the
+`upstream-series/` patch set for the sibling ZX279133. It builds no flashable image any more.
+
+| What you were probably looking for | Where it lives now |
+|---|---|
+| Firmware for this board, the vendor upgrade-package format, A/B slot rollback | <https://github.com/Zlion-Y/zte-e2631-openwrt> (the OpenWrt port; flashing through the stock `supgrade.html` page is verified on hardware) |
+| The one-command "tftp a uImage from U-Boot" bring-up rig | tag **`v0.1.1`** (`git checkout v0.1.1`; the Release there still carries `uImage-e2631.img`) |
+| What this port actually proved | the progress table below: mainline reaches an interactive shell on this A9 (serial, IRQs, L2C, mihomo feature set) |
+
+Still missing, which is why this stays a verification port: **the wired Ethernet driver**
+(GEPHY + `zx279128s-mdio` + TM/NPP/PP), **the second core** (`zte,zx279128-smp`), and
+**SPI-NAND with the transparent decryption layer**. The OpenWrt side does those against
+the PR#25469 6.18 tree, so they are not duplicated here.
+
+⚠ `zx279133` / `sr1010` is **a different SoC** (ZX279133, arm64). Those drivers came in with
+cnjn's upstream series as reference and as the basis for upstream postings; every one of them
+sits behind its own `CONFIG_*` and `zx279128s_e2631_defconfig` selects none of them.
+
+**Historical result, kept as-is**: it boots to an interactive busybox shell over UART, verified
+on hardware - through that now-retired tftp path, with the full boot log below as the evidence.
 
 ```
 === E2631 mainline bring-up init reached userspace ===
@@ -49,7 +70,7 @@ Since 2026-10-14 this repository no longer ships any script or image for the
 "load firmware over TFTP from U-Boot" path. Its only job was to prove that
 mainline reaches a shell on this ZX279128S, and that was done (see the progress
 table). Flashable images for the real board are packaged by
-<https://github.com/Zlion-Y/e2631-openwrt-build> into the vendor upgrade format
+<https://github.com/Zlion-Y/zte-e2631-openwrt> into the vendor upgrade format
 and go in through the vendor `supgrade.html` page or `fw_flashing`, using the A/B
 slots - the U-Boot command line is not touched.
 
@@ -106,7 +127,7 @@ Windows (MSYS2 + Arm GNU Toolchain mingw host) runs the same commands, note:
 In one line: clone, `make zx279128s_e2631_defconfig`,
 `make zImage zte/zx279128s-e2631.dtb`, and see
 whether it compiles and whether the DTS resolves. Deployment on the actual board
-goes through `e2631-openwrt-build`.
+goes through `zte-e2631-openwrt`.
 
 ## Porting status (2026-08-31)
 
@@ -137,7 +158,7 @@ goes through `e2631-openwrt-build`.
 ### Debug toolchain notes
 
 - UART must use `earlycon=zteuart,0x94404000` (standard `earlycon=pl011` hits wrong registers → silent hang after "Starting kernel ...")
-- Load address must stay away from 0x40008000 and 0x42000000 (`0x43000000` is proven reliable); loading at the entry address itself triggers the bootm XIP-path silent crash
+- (retired tftp/bootm path, kept because it explains the v0.1.1 log) load address must stay away from 0x40008000 and 0x42000000 — `0x43000000` is proven reliable; loading at the entry address itself takes the bootm XIP path and the 64-byte header lands on the kernel entry → silent crash
 - Cross-compile: Windows uses MSYS2 + Arm GNU Toolchain (mingw host), `-j4` max; Linux/WSL is faster
 - All userland binaries must be armv5 soft-float (zig `arm-linux-musleabi` static, or vendor uClibc dynamic)
 
