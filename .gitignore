@@ -185,3 +185,8 @@ sphinx_*/
 /rust-project.json
 
 !/upstream-series/**/*
+
+# The kernel .gitignore ignores every dotfile (".*"), and our CI lives under .github.
+# Without this the workflow file stays invisible to a plain "git add" - it only got into
+# the tree because it was force-added once.
+!.github/

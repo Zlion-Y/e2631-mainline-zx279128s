@@ -22,10 +22,10 @@ on:
       - 'upstream-series/**'
   workflow_dispatch:
 
-# 显式授权：仓库默认 GITHUB_TOKEN 为 read-only，
-# 创建/更新 Release 需要 contents: write
+# 这里只构建内核，不再发布可直接引导的镜像（见下面的注释），
+# 所以 GITHUB_TOKEN 保持只读。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -48,28 +48,21 @@ jobs:
       - name: Configure
         run: make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
 
-      - name: Build zImage + dtb
+      - name: Build zImage + board dtb
         run: |
           make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
-          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb || true
-          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- dtbs || true
-          ls -la arch/arm/boot/zImage
-          find arch/arm/boot/dts -name "zx279128s-e2631.dtb"
+          make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
+          ls -la arch/arm/boot/zImage arch/arm/boot/dts/zte/zx279128s-e2631.dtb
 
-      - name: Pack uImage
-        run: |
-          DTB=$(find arch/arm/boot/dts -name "zx279128s-e2631.dtb" | head -1)
-          cat arch/arm/boot/zImage "$DTB" > zImage-dtb-e2631
-          python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
-
-      - name: Upload uImage artifact
+      - name: Upload kernel and board dtb
         uses: actions/upload-artifact@v4
         with:
-          name: uImage-e2631
-          path: uImage-e2631.img
+          name: e2631-mainline-kernel
+          path: |
+            arch/arm/boot/zImage
+            arch/arm/boot/dts/zte/zx279128s-e2631.dtb
 
-      - name: Attach to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: uImage-e2631.img
+      # 以前这里还有一步：cat zImage + dtb 再用 e2631-tools/pack_uimage.py 封成
+      # uImage-e2631.img，并在打 tag 时发到 Release。那条"U-Boot 里 tftp 载入固件"
+      # 的通路已经退役到 tag v0.1.1（Release 里那份 uImage-e2631.img 就是它），
+      # 真机上的可刷镜像由 e2631-openwrt-build 打包成原厂升级包格式，不再从这里出。

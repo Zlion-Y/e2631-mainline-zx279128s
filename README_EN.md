@@ -43,49 +43,40 @@ overlayfs, ext4/squashfs/vfat.
 
 mihomo binary: use the official `mihomo-linux-armv5` package (soft-float).
 
-## Boot (TFTP, no flash writes)
+## Boot (TFTP, no flash writes) — **retired, available only from tag `v0.1.1`**
 
-Enter U-Boot boot mode: press `1` immediately at power-on, password
-`5cE080@fyBD`, then Enter to stop autoboot.
+Since 2026-10-14 this repository no longer ships any script or image for the
+"load firmware over TFTP from U-Boot" path. Its only job was to prove that
+mainline reaches a shell on this ZX279128S, and that was done (see the progress
+table). Flashable images for the real board are packaged by
+<https://github.com/Zlion-Y/e2631-openwrt-build> into the vendor upgrade format
+and go in through the vendor `supgrade.html` page or `fw_flashing`, using the A/B
+slots - the U-Boot command line is not touched.
 
-```
-setenv ipaddr 192.168.10.66
-setenv serverip 192.168.1.100        # your PC running a TFTP server
-tftp 0x43000000 uImage-e2631.img
-bootm 0x43000000
-```
-
-**Important**: load the image at 0x43000000 (or any address far from
-0x40008000 and the 0x42000000 region). `bootm` copies it to 0x40008000.
-Loading AT 0x40008000 takes the XIP path and leaves the 64-byte uImage
-header on the kernel entry point → silent crash.
+Everything that path needed - `build.sh`, `build.bat`, `e2631-tools/`, and the
+defconfig with its embedded initramfs, plus the bootm load-address trap - is
+intact at `git checkout v0.1.1`, and the `v0.1.1` GitHub Release still carries
+`uImage-e2631.img`. Take the tag if you need it; don't add to `main`. (That old
+section also contained the U-Boot boot-mode password, which is one more reason it
+came off `main`.)
 
 ## Repo layout
 
 This repository **is the full Linux kernel source tree** (Linux 6.18.38 +
-all E2631 platform changes committed in-tree). Clone and build directly -
-no base tree fetch, no patches to apply.
+all E2631 platform changes committed in-tree). Clone and `make` directly -
+no base tree fetch, no patches to apply, and no packaging or boot scripts any more.
 
 ```
 arch/arm/boot/dts/zte/zx279128s-e2631.dts   board device tree (incl. zte/ Makefile)
-arch/arm/configs/zx279128s_e2631_defconfig  minimal defconfig (initramfs embedded)
-initramfs-e2631.cpio.gz                     embedded initramfs (busybox + uClibc + init)
-e2631-tools/                                companion tools
-│  tftpd2.py           minimal TFTP server (UDP 69)
-│  pack_uimage.py      uImage packer (load/entry 0x40008000)
-│  serial_ctl.py       UART driver for driving U-Boot
-│  bootflow2.py        scripted tftp+bootm serial sequence
-│  mkconfig.sh / cleanbuild3.sh / mihomobuild.sh    MSYS2 build steps
-│  initramfs-src/      init.c + pack2.py (initramfs build source)
+arch/arm/configs/zx279128s_e2631_defconfig  minimal defconfig (no embedded initramfs)
 upstream-series/       cnjn's ZX279133 16-patch series (6.18.38 baseline, reference)
 research.md            kernel-version research notes
 README / README.md / README_EN.md
-build.sh / build.bat   one-command build scripts (Linux/WSL and Windows/MSYS2)
-.github/workflows/build.yml    CI: build on main and v* tags, publish Release
+.github/workflows/build.yml    CI: builds zImage + dtbs only, result is an artifact
 ```
 
-Built images are not committed; CI publishes them to GitHub Releases
-(tag `v0.1.1` already ships `uImage-e2631.img`, ready to download and boot).
+CI publishes no Release and produces no uImage; the old bootable image is at tag
+`v0.1.1`.
 
 ## Building
 
@@ -96,17 +87,13 @@ Linux / WSL (install Arm GNU Toolchain 10.3 first, add `bin` to PATH):
 
 ```bash
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
-
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
-
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
-
-cat arch/arm/boot/zImage arch/arm/boot/dts/zte/zx279128s-e2631.dtb > zImage-dtb-e2631
-
-python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
 ```
 
-Boot the resulting `uImage-e2631.img` via TFTP as described above.
+That yields `arch/arm/boot/zImage` and `arch/arm/boot/dts/zte/zx279128s-e2631.dtb`,
+and stops there - turning them into something this board boots is out of scope for
+this repository (see the note above).
 
 Windows (MSYS2 + Arm GNU Toolchain mingw host) runs the same commands, note:
 
@@ -114,21 +101,12 @@ Windows (MSYS2 + Arm GNU Toolchain mingw host) runs the same commands, note:
 - `-marm` is forced in arch/arm/Makefile (the mingw toolchain defaults to Thumb);
 - fixdep/gen_init_cpio carry CRLF-compat patches.
 
-Or just use GitHub Actions: fork and push (or `workflow_dispatch`) - the
-image lands in the Actions page / Releases, zero local setup.
-
 ## Getting started (for maintainers)
 
-Three build paths, pick one:
-
-| Method | Command | Applies to |
-|---|---|---|
-| **Linux / WSL2** | `./build.sh` | recommended, one-command in-tree build |
-| **Windows native** | `build.bat` | auto-installs MSYS2 + toolchain, slower on first run |
-| **GitHub Actions** | fork and push | zero setup, download uImage from Actions / Releases |
-
-Flash via TFTP: `tftp 0x43000000 uImage-e2631.img` then
-`bootm 0x43000000` (the load address must be 0x43000000, see notes below).
+In one line: clone, `make zx279128s_e2631_defconfig`,
+`make zImage zte/zx279128s-e2631.dtb`, and see
+whether it compiles and whether the DTS resolves. Deployment on the actual board
+goes through `e2631-openwrt-build`.
 
 ## Porting status (2026-08-31)
 

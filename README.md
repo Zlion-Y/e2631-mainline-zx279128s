@@ -343,47 +343,33 @@ overlayfs、ext4 / squashfs / vfat。
 
 mihomo 二进制：请使用官方 `mihomo-linux-armv5` 包（软浮点）。
 
-## 启动方法（TFTP，不写 flash）
+## 启动方法（TFTP，不写 flash）——**已退役，只在 tag `v0.1.1` 里可用**
 
-进入 U-Boot boot 模式：上电瞬间按 `1`，输入密码 `5cE080@fyBD`，
-再按回车拦住 autoboot。
+2026-10-14 起，本仓库**不再提供**"U-Boot 里 tftp 载入固件"这条通路的任何脚本或镜像：
+它当年唯一的作用是证明 mainline 能在这颗 ZX279128S 上跑到 shell，这件事已经做完（见"适配进度"）。
+真机上要刷的镜像由 <https://github.com/Zlion-Y/e2631-openwrt-build> 打成原厂升级包格式，
+走原厂 `supgrade.html` 或 `fw_flashing`，经 A/B 槽启动，不碰 U-Boot 命令行。
 
-```
-setenv ipaddr 192.168.10.66
-setenv serverip 192.168.1.100        # 你电脑上跑 TFTP 服务器的地址
-tftp 0x43000000 uImage-e2631.img
-bootm 0x43000000
-```
-
-**重要**：镜像必须加载到 0x43000000（或任何远离 0x40008000 和 0x42000000
-区域的地址）。`bootm` 会自动把镜像搬运到 0x40008000。如果直接加载到
-0x40008000 会走 XIP 路径，64 字节的 uImage 头会压在内核入口上 → 静默崩溃。
+那条通路的原样（含 `build.sh` / `build.bat` / `e2631-tools/` / 内嵌 initramfs 的 defconfig，
+以及 bootm 的加载地址坑）在 `git checkout v0.1.1` 里完整保留，GitHub Release `v0.1.1` 也还挂着
+那份 `uImage-e2631.img`。要用就取 tag，别往 main 上再加东西 —— 顺便说一句，那段说明里连着
+bootmode 口令，这也是它从 main 上撤下来的原因之一。
 
 ## 仓库结构
 
 本仓库就是**完整的 Linux 内核源码树**（Linux 6.18.38 + E2631 平台适配全部落树），
-clone 后直接构建，不需要单独拉基础树或套补丁。
+clone 后直接 `make` 构建，不需要单独拉基础树或套补丁，也不再附带打包/引导脚本。
 
 ```
 arch/arm/boot/dts/zte/zx279128s-e2631.dts   板级设备树（含 zte 子目录 Makefile）
-arch/arm/configs/zx279128s_e2631_defconfig  精简 defconfig（initramfs 已内嵌）
-initramfs-e2631.cpio.gz                     内嵌 initramfs（busybox + uClibc + init）
-e2631-tools/                                配套工具
-│  tftpd2.py           简易 TFTP 服务器（UDP 69）
-│  pack_uimage.py      uImage 打包（load/entry 0x40008000）
-│  serial_ctl.py       串口驱动（驱动 U-Boot 用）
-│  bootflow2.py        脚本化 tftp + bootm 串口序列
-│  mkconfig.sh / cleanbuild3.sh / mihomobuild.sh    MSYS2 构建步骤
-│  initramfs-src/      init.c + pack2.py（initramfs 构建源）
+arch/arm/configs/zx279128s_e2631_defconfig  精简 defconfig（不内嵌 initramfs）
 upstream-series/       cnjn 的 ZX279133 16 补丁集（6.18.38 基线，参考）
 research.md            内核版本调研笔记
 README / README.md / README_EN.md
-build.sh / build.bat   一键编译脚本（Linux/WSL 与 Windows/MSYS2）
-.github/workflows/build.yml    CI：main + v* tag 构建并发布 Release
+.github/workflows/build.yml    CI：只做内核构建（zImage + dtbs），产物是 Actions artifact
 ```
 
-编译产物不进仓库，由 CI 发布到 GitHub Release（tag `v0.1.1` 已附带
-`uImage-e2631.img`，可直接下载引导）。
+CI 不发布 Release、也不产 uImage；需要可引导的旧镜像去 tag `v0.1.1`。
 
 ## 编译
 
@@ -393,17 +379,12 @@ Linux / WSL（先安装 Arm GNU Toolchain 10.3，把 `bin` 加进 PATH）：
 
 ```bash
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zx279128s_e2631_defconfig
-
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- -j$(nproc) zImage
-
 make ARCH=arm CROSS_COMPILE=arm-none-linux-gnueabihf- zte/zx279128s-e2631.dtb
-
-cat arch/arm/boot/zImage arch/arm/boot/dts/zte/zx279128s-e2631.dtb > zImage-dtb-e2631
-
-python3 e2631-tools/pack_uimage.py zImage-dtb-e2631 uImage-e2631.img
 ```
 
-产物 `uImage-e2631.img` 按上文 TFTP 引导即可。
+产物是 `arch/arm/boot/zImage` 与 `arch/arm/boot/dts/zte/zx279128s-e2631.dtb`，到这里为止 —— 
+把它们变成能在这块板子上引导的东西不在本仓库的职责内（见上一节）。
 
 Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意：
 
@@ -411,21 +392,10 @@ Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意�
 - arch/arm/Makefile 里已强制 `-marm`（mingw 工具链默认 Thumb）；
 - fixdep / gen_init_cpio 带了 CRLF 兼容补丁。
 
-或者直接用 GitHub Actions：fork 后 push（或手动 `workflow_dispatch`），
-产物在 Actions 页面 / Release 下载，零本机环境。
-
 ## 快速开始（接手者必读）
 
-三种方式，任选其一：
-
-| 方式 | 命令 | 适用 |
-|---|---|---|
-| **Linux / WSL2** | `./build.sh` | 推荐，树内一键编译打包 |
-| **Windows 原生** | `build.bat` | 自动装 MSYS2 + 工具链后编译（较慢，首次自动下载） |
-| **GitHub Actions** | fork 后 push | 零环境，云端编译，Actions 页面 / Release 下载 uImage |
-
-产物 `uImage-e2631.img` 用 TFTP 刷入：`tftp 0x43000000 uImage-e2631.img`，
-然后 `bootm 0x43000000`（加载地址必须是 0x43000000，见下方说明）。
+一句话：clone → `make zx279128s_e2631_defconfig` → `make zImage zte/zx279128s-e2631.dtb`，看它编得过、
+DTS 报错不报错。这块板子上的实际部署走 `e2631-openwrt-build`。
 
 ## 适配进度（2026-08-31）
 
@@ -433,12 +403,12 @@ Windows（MSYS2 + Arm GNU Toolchain mingw 宿主）跑同一套命令，注意�
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 主线内核 6.18.38 启动 | ✅ 完成 | U-Boot → 内核 → 用户空间全链路 |
+| 主线内核 6.18.38 启动 | ✅ 完成 | U-Boot → 内核 → 用户空间全链路（当时的形态 = tag `v0.1.1` 的 tftp 载入） |
 | ZTE 定制串口 | ✅ 完成 | `zteuart` earlycon + ttyAMA0/1 控制台（寄存器布局同 ZX279133） |
 | 交互式 shell | ✅ 完成 | 原厂 busybox v1.17.2（软浮点）+ 键盘输入 |
 | L2C-310 / GIC / 全局定时器 | ✅ 完成 | 单核 1000 BogoMIPS |
 | mihomo 内核特性 | ✅ 全部内建 | TUN / TPROXY / xt_socket / nftables / conntrack / NAT / REDIRECT / MARK / 策略路由 / IPv6 / zram，已实测 TPROXY 注册于 `/proc/net/ip_tables_targets` |
-| 板上网络命令 | ✅ 可用 | 原厂 ip / iptables / ip6tables / ebtables / tc / dnsmasq / curl 已打包进 initramfs |
+| 板上网络命令 | ✅ 可用 | 原厂 ip / iptables / ip6tables / ebtables / tc / dnsmasq / curl —— **注意：那一版是把它们打进内嵌 initramfs 才有的，main 已不再内嵌**（`v0.1.1` 里原样保留） |
 | 设备树 | ✅ 完成 | CPU / GIC / PL310 / 全局定时器 / 双串口；NAND、SPIFC、PCIe、MDIO、GEPHY 节点已描述未启用 |
 
 ### 进行中 / 计划
